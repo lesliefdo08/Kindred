@@ -1,0 +1,10 @@
+{
+  "name": "Kindred TinyCC Runtime",
+  "version": "0.9.27",
+  "platforms": {
+    "win32": {
+      "win64": "resources/runtimes/tcc/bin/win64/tcc.exe",
+      "win32": "resources/runtimes/tcc/bin/win32/tcc.exe"
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "name": "kindred",
+  "version": "0.1.0",
+  "description": "Local-first lightweight code editor with integrated execution",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on tcp:5173 && npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron dist-electron/main.js",
+    "build": "npm run build:renderer && npm run build:electron",
+    "build:renderer": "vite build",
+    "build:electron": "esbuild electron/main.ts electron/preload.ts --bundle --platform=node --target=node20 --format=cjs --outdir=dist-electron --external:electron",
+    "preview": "vite preview",
+    "verify:core": "tsx tests/runtime-harness.ts",
+    "dist:win": "npm run build && electron-builder --win nsis --publish never",
+    "dist:win:portable": "npm run build && electron-builder --win portable --publish never",
+    "postinstall": "node scripts/bootstrap-tcc.js && node scripts/bootstrap-mingw.js"
+  },
+  "keywords": [
+    "electron",
+    "react",
+    "monaco",
+    "code-editor"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.2",
+    "@types/react": "^18.3.22",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.25.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3",
+    "vite": "^4.5.5",
+    "wait-on": "^8.0.3"
+  },
+  "optionalDependencies": {
+    "@xpack-dev-tools/mingw-w64-gcc": "^15.2.0-1.1"
+  },
+  "build": {
+    "appId": "com.kindred.ide",
+    "productName": "Kindred",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "resources/**",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

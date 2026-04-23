@@ -1,0 +1,18 @@
+{
+  "python": {
+    "command": "C:/Kindred/runtimes/python/python.exe",
+    "argsPrefix": []
+  },
+  "cCompiler": {
+    "command": "C:/Kindred/runtimes/mingw/bin/gcc.exe",
+    "argsPrefix": []
+  },
+  "javaCompiler": {
+    "command": "C:/Kindred/runtimes/jdk/bin/javac.exe",
+    "argsPrefix": []
+  },
+  "javaRuntime": {
+    "command": "C:/Kindred/runtimes/jdk/bin/java.exe",
+    "argsPrefix": []
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "runtimes": {
+    "cCompiler": [
+      {
+        "path": "managed-runtimes/bin/${platform}-${arch}/tcc/tcc${exe}",
+        "argsPrefix": [],
+        "label": "Bundled TinyCC"
+      },
+      {
+        "path": "managed-runtimes/bin/${platform}-${arch}/mingw/bin/gcc${exe}",
+        "argsPrefix": [],
+        "label": "Bundled MinGW GCC"
+      },
+      {
+        "path": "node_modules/@xpack-dev-tools/mingw-w64-gcc/.content/bin/${mingwTriplet}-gcc${exe}",
+        "argsPrefix": [],
+        "label": "Bundled xPack MinGW GCC"
+      }
+    ],
+    "cppCompiler": [
+      {
+        "path": "managed-runtimes/bin/${platform}-${arch}/mingw/bin/g++${exe}",
+        "argsPrefix": [],
+        "label": "Bundled MinGW G++"
+      },
+      {
+        "path": "node_modules/@xpack-dev-tools/mingw-w64-gcc/.content/bin/${mingwTriplet}-g++${exe}",
+        "argsPrefix": [],
+        "label": "Bundled xPack MinGW G++"
+      }
+    ],
+    "python": [
+      {
+        "path": "managed-runtimes/bin/${platform}-${arch}/python/python${exe}",
+        "argsPrefix": [],
+        "label": "Bundled Python"
+      }
+    ],
+    "javaCompiler": [
+      {
+        "path": "managed-runtimes/bin/${platform}-${arch}/jdk/bin/javac${exe}",
+        "argsPrefix": [],
+        "label": "Bundled Java compiler"
+      }
+    ],
+    "javaRuntime": [
+      {
+        "path": "managed-runtimes/bin/${platform}-${arch}/jdk/bin/java${exe}",
+        "argsPrefix": [],
+        "label": "Bundled Java runtime"
+      }
+    ]
+  }
+}

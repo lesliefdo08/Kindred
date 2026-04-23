@@ -1,0 +1,116 @@
+export type SupportedLanguage = "python" | "c" | "cpp" | "javascript" | "java" | "plaintext";
+
+export interface LanguageCandidate {
+  language: SupportedLanguage;
+  score: number;
+}
+
+export interface DetectionResult {
+  language: SupportedLanguage;
+  reason: "extension" | "content" | "hybrid" | "ambiguous" | "fallback";
+  isAmbiguous: boolean;
+  confidence: number;
+  candidates: LanguageCandidate[];
+  message?: string;
+}
+
+export interface OpenFileResult {
+  filePath: string;
+  fileName: string;
+  content: string;
+  language: SupportedLanguage;
+}
+
+export interface SaveFileRequest {
+  filePath: string | null;
+  content: string;
+  suggestedExtension?: string;
+}
+
+export interface SaveFileResult {
+  filePath: string;
+  fileName: string;
+}
+
+export interface RunCodeRequest {
+  language: SupportedLanguage;
+  code: string;
+  filePath?: string | null;
+  stdin?: string;
+  executionMode?: "auto" | SupportedLanguage;
+  detectionConfidence?: number;
+  detectedLanguage?: SupportedLanguage;
+  isAmbiguous?: boolean;
+}
+
+export interface RuntimeValidationResult {
+  ok: boolean;
+  missingCommands: string[];
+}
+
+export interface ExecutionLogEntry {
+  at: string;
+  step: string;
+  detail: string;
+}
+
+export type ErrorCategory = "syntax" | "missing-module" | "compilation" | "runtime" | "unknown";
+
+export interface ErrorInsight {
+  category: ErrorCategory;
+  title: string;
+  explanation: string;
+  suggestions: string[];
+}
+
+export interface RunCodeResult {
+  ok: boolean;
+  command: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  durationMs: number;
+  validation: RuntimeValidationResult;
+  logs: ExecutionLogEntry[];
+  errorInsights: ErrorInsight[];
+}
+
+export type ExecutionSummaryTone = "info" | "success" | "warning" | "error";
+
+export interface ExecutionSummary {
+  title: string;
+  detail: string;
+  tone: ExecutionSummaryTone;
+}
+
+export interface EditorDiagnostic {
+  line: number;
+  column?: number;
+  message: string;
+  severity: "error" | "warning" | "info";
+}
+
+export interface WorkspaceDocument {
+  id: string;
+  filePath: string | null;
+  fileName: string;
+  content: string;
+  executionMode: "auto" | SupportedLanguage;
+  detection: DetectionResult | null;
+  diagnostics: EditorDiagnostic[];
+  dirty: boolean;
+}
+
+export type SidebarSection = "explorer" | "search" | "diagnostics" | "settings" | "extensions";
+
+export type UtilityDrawerTab = "input" | "tests" | "docs";
+
+export type ConsoleTab = "output" | "problems" | "input" | "logs";
+
+export interface KindredApi {
+  openFile: () => Promise<OpenFileResult | null>;
+  saveFile: (request: SaveFileRequest) => Promise<SaveFileResult | null>;
+  detectLanguage: (filePath: string | null, code: string) => Promise<DetectionResult>;
+  runCode: (request: RunCodeRequest) => Promise<RunCodeResult>;
+  stopRun: () => Promise<{ stopped: boolean }>;
+}
