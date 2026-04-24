@@ -4,88 +4,77 @@ interface ToolbarProps {
   fileName: string;
   executionMode: "auto" | SupportedLanguage;
   detectedLanguage: SupportedLanguage;
-  detectionConfidence: number;
-  isAmbiguous: boolean;
+  autoDetectedLabel: string | null;
   isRunning: boolean;
-  onOpen: () => void;
+  fontSize: number;
+  onFontSizeChange: (size: number) => void;
   onSave: () => void;
   onRun: () => void;
   onStop: () => void;
   onExecutionModeChange: (mode: "auto" | SupportedLanguage) => void;
 }
 
-const languageLabels: Record<SupportedLanguage, string> = {
-  python: "Python",
-  c: "C",
-  cpp: "C++",
-  javascript: "JavaScript",
-  java: "Java",
-  plaintext: "Plaintext"
-};
-
-const executionModeLabels: Record<"auto" | SupportedLanguage, string> = {
-  auto: "Auto",
-  python: "Python",
-  c: "C",
-  cpp: "C++",
-  javascript: "JavaScript",
-  java: "Java",
-  plaintext: "Plaintext"
-};
-
 export default function Toolbar({
   fileName,
   executionMode,
   detectedLanguage,
-  detectionConfidence,
-  isAmbiguous,
+  autoDetectedLabel,
   isRunning,
-  onOpen,
+  fontSize,
+  onFontSizeChange,
   onSave,
   onRun,
   onStop,
   onExecutionModeChange
 }: ToolbarProps) {
-  const confidenceLabel = `${Math.round(detectionConfidence * 100)}%`;
+  const effectiveLanguage = executionMode === "auto" ? detectedLanguage : executionMode;
 
   return (
     <header className="toolbar">
       <div className="toolbar-left">
-        <img className="brand-mark" src="/kindredlogo.png" alt="Kindred" />
-        <div className="brand-copy">
-          <h1>Kindred</h1>
-          <span className="brand-tagline">Run code instantly. No setup.</span>
+        <div className="brand-lockup" aria-label="Kindred">
+          <img src="/kindredlogo.png" alt="" className="toolbar-logo" />
+          <span className="brand-name">Kindred</span>
         </div>
-        <span className="file-chip">{fileName}</span>
-        <div className="language-control">
-          <span className="language-chip subtle detected-chip" title={`Confidence ${confidenceLabel}`}>{languageLabels[detectedLanguage]}</span>
+        <span className="file-chip" title={fileName}>{fileName}</span>
+        <div className="language-stack">
           <select
-            className="language-select detection-select"
+            className="language-select"
             value={executionMode}
             onChange={(event) => onExecutionModeChange(event.target.value as "auto" | SupportedLanguage)}
             aria-label="Language mode"
-            title={`Detected confidence ${confidenceLabel}`}
           >
             <option value="auto">Auto</option>
-            <option value="c">C</option>
             <option value="python">Python</option>
+            <option value="c">C</option>
             <option value="java">Java</option>
           </select>
+          {autoDetectedLabel ? <span className="auto-detected-label">{autoDetectedLabel}</span> : null}
         </div>
+        <select
+          className="language-select font-size-select"
+          value={fontSize}
+          onChange={(event) => onFontSizeChange(Number(event.target.value))}
+          aria-label="Editor font size"
+          title="Editor font size"
+        >
+          <option value="13">Small</option>
+          <option value="14">Default</option>
+          <option value="16">Large</option>
+        </select>
       </div>
       <div className="toolbar-right">
-        <button type="button" className="btn ghost" onClick={onOpen} title="Ctrl+O">
-          Open
+        <button type="button" className="btn primary run-button" onClick={onRun} disabled={isRunning || effectiveLanguage === "plaintext"} title="Ctrl+Enter or F5">
+          {isRunning ? "Running..." : "Run"}
         </button>
         <button type="button" className="btn ghost" onClick={onSave} title="Ctrl+S">
           Save
         </button>
-        <button type="button" className="btn danger-ghost stop-button" onClick={onStop} disabled={!isRunning} title="Stop execution">
-          Stop
-        </button>
-        <button type="button" className="btn primary run-button" onClick={onRun} disabled={isRunning || executionMode === "plaintext"} title="Ctrl+R or F5">
-          {isRunning ? "Running..." : "Run code"}
-        </button>
+        {isRunning ? (
+          <button type="button" className="btn danger-ghost stop-button" onClick={onStop} title="Stop execution">
+            Stop
+          </button>
+        ) : null}
       </div>
     </header>
   );

@@ -32,6 +32,19 @@ export interface SaveFileResult {
   fileName: string;
 }
 
+export interface ExplorerNode {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  children?: ExplorerNode[];
+}
+
+export interface OpenFolderResult {
+  rootPath: string;
+  rootName: string;
+  entries: ExplorerNode[];
+}
+
 export interface RunCodeRequest {
   language: SupportedLanguage;
   code: string;
@@ -61,6 +74,9 @@ export interface ErrorInsight {
   title: string;
   explanation: string;
   suggestions: string[];
+  probableCause?: string;
+  suggestedFix?: string;
+  patchPreview?: string;
 }
 
 export interface RunCodeResult {
@@ -73,6 +89,16 @@ export interface RunCodeResult {
   validation: RuntimeValidationResult;
   logs: ExecutionLogEntry[];
   errorInsights: ErrorInsight[];
+}
+
+export interface RuntimeStatusEntry {
+  label: string;
+  ready: boolean;
+  detail: string;
+}
+
+export interface RuntimeStatusResult {
+  entries: RuntimeStatusEntry[];
 }
 
 export type ExecutionSummaryTone = "info" | "success" | "warning" | "error";
@@ -101,16 +127,18 @@ export interface WorkspaceDocument {
   dirty: boolean;
 }
 
-export type SidebarSection = "explorer" | "search" | "diagnostics" | "settings" | "extensions";
+export type ConsoleTab = "output" | "problems" | "terminal" | "logs";
 
-export type UtilityDrawerTab = "input" | "tests" | "docs";
-
-export type ConsoleTab = "output" | "problems" | "input" | "logs";
+export type MenuAction = "open" | "save" | "run" | "openFolder";
 
 export interface KindredApi {
   openFile: () => Promise<OpenFileResult | null>;
+  openFolder: () => Promise<OpenFolderResult | null>;
+  readWorkspaceFile: (filePath: string) => Promise<OpenFileResult | null>;
   saveFile: (request: SaveFileRequest) => Promise<SaveFileResult | null>;
   detectLanguage: (filePath: string | null, code: string) => Promise<DetectionResult>;
   runCode: (request: RunCodeRequest) => Promise<RunCodeResult>;
   stopRun: () => Promise<{ stopped: boolean }>;
+  checkRuntimeStatus: () => Promise<RuntimeStatusResult>;
+  onMenuAction: (action: MenuAction, callback: () => void) => () => void;
 }

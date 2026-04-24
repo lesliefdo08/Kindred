@@ -1,26 +1,33 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConsolePane from "./components/ConsolePane";
-import DiagnosticsPanel from "./components/DiagnosticsPanel";
 import EditorPane from "./components/EditorPane";
-import StdinPanel from "./components/StdinPanel";
 import Toolbar from "./components/Toolbar";
 import { getKindredApi } from "./lib/kindredApi";
 import {
   ConsoleTab,
   DetectionResult,
   EditorDiagnostic,
+  ExplorerNode,
   ErrorInsight,
   ExecutionLogEntry,
   ExecutionSummary,
+  OpenFileResult,
+  OpenFolderResult,
   RunCodeResult,
-  SidebarSection,
   SupportedLanguage,
-  UtilityDrawerTab,
   WorkspaceDocument
 } from "./types";
 
-const defaultCode = `# Welcome to Kindred\nprint("Hello from Kindred")\n`;
-const detectionConfidenceThreshold = 0.6;
+const detectionConfidenceThreshold = 0.62;
+
+const starterTemplates: Record<SupportedLanguage, string> = {
+  python: "print(\"Hello, world!\")\n",
+  c: "#include <stdio.h>\n\nint main(void) {\n    printf(\"Hello, world!\\n\");\n    return 0;\n}\n",
+  cpp: "#include <iostream>\n\nint main() {\n    std::cout << \"Hello, world!\\n\";\n    return 0;\n}\n",
+  javascript: "console.log(\"Hello, world!\");\n",
+  java: "public class Main {\n    public static void main(String[] args) {\n        System.out.println(\"Hello, world!\");\n    }\n}\n",
+  plaintext: ""
+};
 
 const extensionByLanguage: Record<SupportedLanguage, string> = {
   python: "py",
@@ -31,35 +38,22 @@ const extensionByLanguage: Record<SupportedLanguage, string> = {
   plaintext: "txt"
 };
 
-const languageNames: Record<SupportedLanguage, string> = {
-  python: "Python",
-  c: "C",
-  cpp: "C++",
-  javascript: "JavaScript",
-  java: "Java",
-  plaintext: "Plaintext"
-};
-
-const sidebarItems: Array<{ id: SidebarSection; label: string; shortcut: string }> = [
-  { id: "explorer", label: "Explorer", shortcut: "Ctrl+1" },
-  { id: "search", label: "Search", shortcut: "Ctrl+2" },
-  { id: "diagnostics", label: "Diagnostics", shortcut: "Ctrl+3" },
-  { id: "settings", label: "Settings", shortcut: "Ctrl+4" },
-  { id: "extensions", label: "Extensions", shortcut: "Future" }
-];
-
-const utilityTabs: Array<{ id: UtilityDrawerTab; label: string }> = [
-  { id: "input", label: "Input" },
-  { id: "tests", label: "Tests" },
-  { id: "docs", label: "Docs" }
-];
-
-const consoleTabs: Array<{ id: ConsoleTab; label: string }> = [
-  { id: "output", label: "Output" },
-  { id: "problems", label: "Problems" },
-  { id: "input", label: "Input" },
-  { id: "logs", label: "Logs" }
-];
+function languageLabel(language: SupportedLanguage): string {
+  switch (language) {
+    case "cpp":
+      return "C++";
+    case "javascript":
+      return "JavaScript";
+    case "java":
+      return "Java";
+    case "c":
+      return "C";
+    case "python":
+      return "Python";
+    default:
+      return "Plaintext";
+  }
+}
 
 function parseExecutionDiagnostics(stderr: string): EditorDiagnostic[] {
   if (!stderr.trim()) {
@@ -69,7 +63,8 @@ function parseExecutionDiagnostics(stderr: string): EditorDiagnostic[] {
   const diagnostics: EditorDiagnostic[] = [];
   const cLikePattern = /^([^\n:]+):(\d+):(\d+):\s*(error|warning):\s*([^\n]+)/gm;
   const javaPattern = /(?:^|\n)(?:[\w.-]+\.java):(\d+):\s*(error|warning):\s*([^\n]+)/g;
-  const pythonPattern = /File\s+"[^"]+",\s+line\s+(\d+)/g;
+  const pythonPattern = /File\s+"[^"]+",\s+line\s+(\d+)(?:,\s+in\s+([^\n]+))?/g;
+  const pythonTail = stderr.trim().split(/\r?\n/).filter(Boolean).slice(-1)[0] ?? "Python runtime traceback";
 
   let match: RegExpExecArray | null;
   while ((match = cLikePattern.exec(stderr)) !== null) {
@@ -93,7 +88,7 @@ function parseExecutionDiagnostics(stderr: string): EditorDiagnostic[] {
     diagnostics.push({
       line: Number(match[1]),
       severity: "error",
-      message: "Python runtime traceback"
+      message: pythonTail
     });
   }
 
@@ -118,10 +113,19 @@ function summaryFromResult(result: RunCodeResult): ExecutionSummary {
   }
 
   if (result.ok) {
+    const seconds = (result.durationMs / 1000).toFixed(result.durationMs >= 1000 ? 1 : 2).replace(/\.0$/, "");
     return {
       title: "Completed",
-      detail: `Ran in ${result.durationMs} ms`,
+      detail: `Completed in ${seconds}s`,
       tone: "success"
+    };
+  }
+
+  if (/(error:|compilation terminated|undefined reference|cannot find symbol|expected .+ before|fatal error)/i.test(result.stderr)) {
+    return {
+      title: "Compilation failed",
+      detail: result.stderr.split("\n")[0] || "The compiler reported an error.",
+      tone: "error"
     };
   }
 
@@ -167,55 +171,77 @@ function inferDocumentLanguage(detection: DetectionResult | null, executionMode:
     return executionMode;
   }
 
-  if (!detection) {
-    return "python";
-  }
-
-  if (detection.isAmbiguous || detection.confidence < detectionConfidenceThreshold) {
-    return "python";
+  if (!detection || detection.isAmbiguous || detection.confidence < detectionConfidenceThreshold) {
+    return "plaintext";
   }
 
   return detection.language;
 }
 
-function tabFileName(language: SupportedLanguage, content: string, existingIndex: number): string {
-  const lower = content.toLowerCase();
-  if (language === "java") {
-    const match = content.match(/^\s*public\s+class\s+([A-Za-z_][A-Za-z0-9_]*)/m);
-    if (match?.[1]) {
-      return `${match[1]}.java`;
-    }
-    return existingIndex === 0 ? "Main.java" : `Main-${existingIndex + 1}.java`;
-  }
-
-  if (language === "c") {
-    return existingIndex === 0 ? "main.c" : `main-${existingIndex + 1}.c`;
-  }
-
-  if (language === "plaintext") {
-    return existingIndex === 0 ? "untitled.txt" : `untitled-${existingIndex + 1}.txt`;
-  }
-
-  if (lower.includes("def ") || lower.includes("print(")) {
-    return existingIndex === 0 ? "main.py" : `main-${existingIndex + 1}.py`;
-  }
-
-  return existingIndex === 0 ? `untitled.${extensionByLanguage[language]}` : `untitled-${existingIndex + 1}.${extensionByLanguage[language]}`;
+function untitledFileName(index: number, extension: string): string {
+  return index === 1 ? `untitled.${extension}` : `untitled${index}.${extension}`;
 }
 
-function brandingAsset(pathName: string): string {
-  return new URL(`../${pathName}`, import.meta.url).href;
+function parseUntitledIndex(fileName: string): number | null {
+  const match = fileName.match(/^untitled(\d*)\.[^.]+$/i);
+  if (!match) {
+    return null;
+  }
+
+  return match[1] ? Number(match[1]) : 1;
+}
+
+function ensureUniqueFileName(fileName: string, documents: WorkspaceDocument[], excludingId?: string): string {
+  const isTaken = (candidate: string): boolean => {
+    const normalized = candidate.toLowerCase();
+    return documents.some((document) => document.id !== excludingId && document.fileName.toLowerCase() === normalized);
+  };
+
+  if (!isTaken(fileName)) {
+    return fileName;
+  }
+
+  const untitledMatch = fileName.match(/^untitled(\d*)\.(.+)$/i);
+  if (untitledMatch) {
+    const extension = untitledMatch[2];
+    let index = 1;
+    while (isTaken(untitledFileName(index, extension))) {
+      index += 1;
+    }
+    return untitledFileName(index, extension);
+  }
+
+  const dot = fileName.lastIndexOf(".");
+  const base = dot >= 0 ? fileName.slice(0, dot) : fileName;
+  const extensionPart = dot >= 0 ? fileName.slice(dot) : "";
+  let suffix = 2;
+  while (isTaken(`${base}${suffix}${extensionPart}`)) {
+    suffix += 1;
+  }
+  return `${base}${suffix}${extensionPart}`;
+}
+
+function nextUntitledFileName(extension: string, documents: WorkspaceDocument[], excludingId?: string): string {
+  let index = 1;
+  while (documents.some((document) => document.id !== excludingId && document.fileName.toLowerCase() === untitledFileName(index, extension).toLowerCase())) {
+    index += 1;
+  }
+  return untitledFileName(index, extension);
 }
 
 export default function App() {
   const api = getKindredApi();
-  const openFileInputRef = useRef<HTMLInputElement | null>(null);
+  const workspaceShellRef = useRef<HTMLElement | null>(null);
+  const editorColumnRef = useRef<HTMLElement | null>(null);
+  const isDraggingConsoleRef = useRef(false);
+  const isDraggingExplorerRef = useRef(false);
+
   const [documents, setDocuments] = useState<WorkspaceDocument[]>([
     createDocument({
       id: newDocumentId(),
       filePath: null,
       fileName: "untitled.py",
-      content: defaultCode,
+      content: "",
       executionMode: "auto",
       detection: null,
       diagnostics: [],
@@ -233,22 +259,77 @@ export default function App() {
   const [error, setError] = useState("");
   const [command, setCommand] = useState("");
   const [durationMs, setDurationMs] = useState(0);
+  const [exitCode, setExitCode] = useState<number | null>(null);
   const [logs, setLogs] = useState<ExecutionLogEntry[]>([]);
   const [errorInsights, setErrorInsights] = useState<ErrorInsight[]>([]);
   const [appError, setAppError] = useState("");
   const [stdin, setStdin] = useState("");
-  const [sidebarSection, setSidebarSection] = useState<SidebarSection>("explorer");
-  const [utilityTab, setUtilityTab] = useState<UtilityDrawerTab>("input");
   const [consoleTab, setConsoleTab] = useState<ConsoleTab>("output");
-  const [drawerCollapsed, setDrawerCollapsed] = useState(true);
-  const [recentFiles, setRecentFiles] = useState<string[]>(["examples/hello.py", "examples/main.c", "examples/Main.java"]);
+  const [editorFontSize, setEditorFontSize] = useState<number>(14);
+  const [consoleHeight, setConsoleHeight] = useState<number>(() => {
+    const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 900;
+    return Math.max(180, Math.round(viewportHeight * 0.25));
+  });
+  const [isResizingConsole, setIsResizingConsole] = useState(false);
+
+  const [workspaceRootName, setWorkspaceRootName] = useState<string | null>(null);
+  const [workspaceTree, setWorkspaceTree] = useState<ExplorerNode[]>([]);
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+  const [explorerVisible, setExplorerVisible] = useState(false);
+  const [explorerWidth, setExplorerWidth] = useState(260);
+  const [isResizingExplorer, setIsResizingExplorer] = useState(false);
+  const [focusLine, setFocusLine] = useState<number | null>(null);
 
   const activeDocument = useMemo(() => documents.find((document) => document.id === activeDocumentId) ?? documents[0], [documents, activeDocumentId]);
   const activeDetection = activeDocument?.detection ?? null;
-  const effectiveLanguage = useMemo(() => inferDocumentLanguage(activeDetection, activeDocument?.executionMode ?? "auto"), [activeDetection, activeDocument?.executionMode]);
-  const isLowConfidence = useMemo(() => Boolean(activeDetection && (activeDetection.isAmbiguous || activeDetection.confidence < detectionConfidenceThreshold)), [activeDetection]);
+  const effectiveLanguage = useMemo(
+    () => inferDocumentLanguage(activeDetection, activeDocument?.executionMode ?? "auto"),
+    [activeDetection, activeDocument?.executionMode]
+  );
   const canRun = useMemo(() => activeDocument?.content.trim().length > 0 && effectiveLanguage !== "plaintext", [activeDocument, effectiveLanguage]);
-  const explorerDocuments = useMemo(() => documents, [documents]);
+  const hasWorkspace = workspaceRootName !== null;
+  const showExplorerPanel = hasWorkspace && explorerVisible;
+  const editorColumnStyle = useMemo(() => ({ "--console-height": `${consoleHeight}px` } as CSSProperties), [consoleHeight]);
+
+  const autoDetectedLabel = useMemo(() => {
+    if (!activeDocument || activeDocument.executionMode !== "auto") {
+      return null;
+    }
+
+    if (!activeDetection || activeDetection.isAmbiguous || activeDetection.confidence < detectionConfidenceThreshold) {
+      return "Language: Auto (keep typing for clearer detection)";
+    }
+
+    return `Language: ${languageLabel(activeDetection.language)} (auto-detected)`;
+  }, [activeDocument, activeDetection]);
+
+  const isStarterVisible = Boolean(activeDocument && !activeDocument.filePath && !activeDocument.content.trim());
+  const activeLanguageForTemplate = activeDocument ? inferDocumentLanguage(activeDocument.detection, activeDocument.executionMode) : "python";
+
+  const setActiveDocumentFromFile = useCallback(async (fileResult: OpenFileResult) => {
+    const existing = documents.find((document) => document.filePath && fileResult.filePath && document.filePath.toLowerCase() === fileResult.filePath.toLowerCase());
+    if (existing) {
+      setActiveDocumentId(existing.id);
+      return;
+    }
+
+    const nextDetection = await api.detectLanguage(fileResult.filePath, fileResult.content);
+    const id = newDocumentId();
+    setDocuments((current) => [
+      ...current,
+      createDocument({
+        id,
+        filePath: fileResult.filePath,
+        fileName: fileResult.fileName,
+        content: fileResult.content,
+        executionMode: "auto",
+        detection: nextDetection,
+        diagnostics: [],
+        dirty: false
+      })
+    ]);
+    setActiveDocumentId(id);
+  }, [api, documents]);
 
   useEffect(() => {
     if (!window.kindredAPI) {
@@ -260,32 +341,28 @@ export default function App() {
     setDocuments((current) => current.map((document) => (document.id === activeDocumentId ? updater(document) : document)));
   }, [activeDocumentId]);
 
-  const createNewDocument = useCallback((template?: { fileName: string; content: string; language?: SupportedLanguage; executionMode?: "auto" | SupportedLanguage }) => {
+  const createNewDocument = useCallback((): void => {
     const id = newDocumentId();
-    const nextDocument = createDocument({
-      id,
-      filePath: null,
-      fileName: template?.fileName ?? "untitled.py",
-      content: template?.content ?? "",
-      executionMode: template?.executionMode ?? "auto",
-      detection: null,
-      diagnostics: [],
-      dirty: Boolean(template?.content)
+    setDocuments((current) => {
+      const fileName = nextUntitledFileName("py", current);
+      return [
+        ...current,
+        createDocument({
+          id,
+          filePath: null,
+          fileName,
+          content: "",
+          executionMode: "auto",
+          detection: null,
+          diagnostics: [],
+          dirty: false
+        })
+      ];
     });
-
-    setDocuments((current) => [...current, nextDocument]);
     setActiveDocumentId(id);
-    setConsoleTab("output");
     setExecutionSummary({ title: "Idle", detail: "Ready to run.", tone: "info" });
-    setSidebarSection("explorer");
-    setDrawerCollapsed(false);
+    setConsoleTab("output");
   }, []);
-
-  const handleDetectCurrent = useCallback(async (filePath: string | null, content: string) => {
-    const nextDetection = await api.detectLanguage(filePath, content);
-    updateActiveDocument((current) => ({ ...current, detection: nextDetection }));
-    return nextDetection;
-  }, [api, updateActiveDocument]);
 
   const handleOpen = useCallback(async (): Promise<void> => {
     try {
@@ -294,35 +371,35 @@ export default function App() {
         return;
       }
 
-      const nextDetection = await api.detectLanguage(result.filePath, result.content);
-      const id = newDocumentId();
-      setDocuments((current) => [
-        ...current,
-        createDocument({
-          id,
-          filePath: result.filePath,
-          fileName: result.fileName,
-          content: result.content,
-          executionMode: "auto",
-          detection: nextDetection,
-          diagnostics: [],
-          dirty: false
-        })
-      ]);
-      setActiveDocumentId(id);
+      await setActiveDocumentFromFile(result);
       setExecutionSummary({ title: "Idle", detail: "Ready to run.", tone: "info" });
       setOutput("");
       setError("");
       setCommand("");
       setDurationMs(0);
+      setExitCode(null);
       setLogs([]);
       setErrorInsights([]);
       setAppError("");
-      setRecentFiles((current) => [result.fileName, ...current.filter((entry) => entry !== result.fileName)].slice(0, 8));
-      setSidebarSection("explorer");
-      setDrawerCollapsed(false);
     } catch {
       setAppError("Unable to open the selected file.");
+    }
+  }, [api, setActiveDocumentFromFile]);
+
+  const handleOpenFolder = useCallback(async (): Promise<void> => {
+    try {
+      const folder: OpenFolderResult | null = await api.openFolder();
+      if (!folder) {
+        return;
+      }
+
+      setWorkspaceRootName(folder.rootName);
+      setWorkspaceTree(folder.entries);
+      setCollapsedFolders({});
+      setExplorerVisible(true);
+      setAppError("");
+    } catch {
+      setAppError("Unable to open folder.");
     }
   }, [api]);
 
@@ -365,7 +442,6 @@ export default function App() {
           ? { ...document, filePath: saved.filePath, fileName: saved.fileName, dirty: false }
           : document
       )));
-      setRecentFiles((currentFiles) => [saved.fileName, ...currentFiles.filter((entry) => entry !== saved.fileName)].slice(0, 8));
       setAppError("");
     } catch {
       setAppError("Unable to save the current file.");
@@ -388,13 +464,37 @@ export default function App() {
       return;
     }
 
+    if (effectiveLanguage === "java") {
+      const className = inferJavaClassName(activeDocument.content);
+      if (className) {
+        const expectedName = `${className}.java`;
+        if (activeDocument.fileName !== expectedName) {
+          const shouldRename = window.confirm(`Rename file to ${expectedName}?`);
+          if (shouldRename) {
+            setDocuments((current) => current.map((document) => (
+              document.id === activeDocument.id
+                ? {
+                    ...document,
+                    fileName: expectedName,
+                    filePath: document.filePath ? replaceFileNameInPath(document.filePath, expectedName) : document.filePath,
+                    dirty: true
+                  }
+                : document
+            )));
+          }
+        }
+      }
+    }
+
     setIsRunning(true);
     setOutput("");
     setError("");
     setLogs([]);
     setErrorInsights([]);
+    setDurationMs(0);
+    setExitCode(null);
     setConsoleTab("output");
-    setExecutionSummary({ title: "Running...", detail: "Executing with current language mode.", tone: "info" });
+    setExecutionSummary({ title: "Running", detail: "Executing with current language mode.", tone: "info" });
 
     try {
       const result: RunCodeResult = await api.runCode({
@@ -414,16 +514,19 @@ export default function App() {
           ? { ...document, diagnostics }
           : document
       )));
+
       setOutput(result.stdout);
       setError(result.stderr);
       setCommand(result.command);
       setDurationMs(result.durationMs);
+      setExitCode(result.exitCode);
       setLogs(result.logs);
       setErrorInsights(result.errorInsights);
       setExecutionSummary(summaryFromResult(result));
       setAppError("");
     } catch (runError) {
       setExecutionSummary({ title: "Execution failed", detail: "Runner did not return a result.", tone: "error" });
+      setExitCode(1);
       setAppError(runError instanceof Error ? runError.message : "Execution failed.");
     } finally {
       setIsRunning(false);
@@ -431,55 +534,90 @@ export default function App() {
   }, [api, activeDocument, activeDocumentId, activeDetection, canRun, effectiveLanguage, stdin]);
 
   const handleDocumentChange = useCallback((content: string) => {
-    updateActiveDocument((current) => ({ ...current, content, dirty: true, diagnostics: current.dirty ? current.diagnostics : current.diagnostics }));
+    updateActiveDocument((current) => ({ ...current, content, dirty: true }));
   }, [updateActiveDocument]);
 
   const handleExecutionModeChange = useCallback((mode: "auto" | SupportedLanguage) => {
     updateActiveDocument((current) => ({ ...current, executionMode: mode }));
   }, [updateActiveDocument]);
 
-  const handleNewFile = useCallback((language: SupportedLanguage = "python") => {
-    const fileName = language === "java" ? "Main.java" : language === "c" ? "main.c" : language === "python" ? "main.py" : `untitled.${extensionByLanguage[language]}`;
-    createNewDocument({ fileName, content: language === "java" ? 'public static void main(String[] args) {\n  System.out.println("Hello from Java");\n}\n' : language === "c" ? '#include <stdio.h>\nint main(void) {\n  printf("Hello, World!\\n");\n  return 0;\n}\n' : defaultCode, executionMode: "auto" });
-  }, [createNewDocument]);
+  const loadStarterTemplate = useCallback((language: SupportedLanguage) => {
+    updateActiveDocument((current) => ({
+      ...current,
+      content: starterTemplates[language],
+      executionMode: language === "plaintext" ? "auto" : language,
+      dirty: true
+    }));
+    setConsoleTab("output");
+  }, [updateActiveDocument]);
+
+  const openFromExplorer = useCallback(async (filePath: string) => {
+    try {
+      const result = await api.readWorkspaceFile(filePath);
+      if (!result) {
+        return;
+      }
+      await setActiveDocumentFromFile(result);
+    } catch {
+      setAppError("Unable to open workspace file.");
+    }
+  }, [api, setActiveDocumentFromFile]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
       const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
       const ctrlKey = isMac ? event.metaKey : event.ctrlKey;
+      const key = event.key.toLowerCase();
 
-      if (ctrlKey && event.key === "o") {
+      if (ctrlKey && key === "o" && !event.shiftKey) {
+        event.preventDefault();
+        void handleOpenFolder();
+      } else if (ctrlKey && key === "o" && event.shiftKey) {
         event.preventDefault();
         void handleOpen();
-      } else if (ctrlKey && event.key === "s") {
+      } else if (ctrlKey && key === "s") {
         event.preventDefault();
         void handleSave();
-      } else if ((ctrlKey && event.key === "r") || event.key === "F5") {
+      } else if ((ctrlKey && key === "r") || event.key === "F5") {
         event.preventDefault();
         if (!isRunning && canRun) {
           void handleRun();
         }
-      } else if (ctrlKey && event.key === "1") {
+      } else if (ctrlKey && key === "enter") {
         event.preventDefault();
-        setSidebarSection("explorer");
-      } else if (ctrlKey && event.key === "2") {
+        if (!isRunning && canRun) {
+          void handleRun();
+        }
+      } else if (ctrlKey && key === "b") {
         event.preventDefault();
-        setSidebarSection("search");
-      } else if (ctrlKey && event.key === "3") {
-        event.preventDefault();
-        setSidebarSection("diagnostics");
-      } else if (ctrlKey && event.key === "4") {
-        event.preventDefault();
-        setSidebarSection("settings");
+        if (hasWorkspace) {
+          setExplorerVisible((current) => !current);
+        }
       } else if (ctrlKey && event.key === "`") {
         event.preventDefault();
-        setDrawerCollapsed((current) => !current);
+        setConsoleTab((current) => (current === "terminal" ? "output" : "terminal"));
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isRunning, canRun, handleOpen, handleSave, handleRun]);
+  }, [canRun, handleOpen, handleOpenFolder, handleRun, handleSave, hasWorkspace, isRunning]);
+
+  useEffect(() => {
+    const unsubscribers: Array<() => void> = [];
+    try {
+      unsubscribers.push(api.onMenuAction("open", () => { void handleOpen(); }));
+      unsubscribers.push(api.onMenuAction("openFolder", () => { void handleOpenFolder(); }));
+      unsubscribers.push(api.onMenuAction("save", () => { void handleSave(); }));
+      unsubscribers.push(api.onMenuAction("run", () => { void handleRun(); }));
+    } catch {
+      // No-op outside Electron shell.
+    }
+
+    return () => {
+      unsubscribers.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [api, handleOpen, handleOpenFolder, handleRun, handleSave]);
 
   useEffect(() => {
     if (!activeDocument) {
@@ -494,8 +632,8 @@ export default function App() {
             ? { ...document, detection: nextDetection }
             : document
         )));
-      } catch (error) {
-        setAppError(error instanceof Error ? error.message : "Language detection failed.");
+      } catch (detectionError) {
+        setAppError(detectionError instanceof Error ? detectionError.message : "Language detection failed.");
       }
     }, 250);
 
@@ -503,87 +641,190 @@ export default function App() {
   }, [api, activeDocument?.content, activeDocument?.filePath, activeDocument?.id]);
 
   useEffect(() => {
-    if (activeDocument && !activeDocument.filePath) {
-      const nextLanguage = inferDocumentLanguage(activeDocument.detection, activeDocument.executionMode);
-      const extension = extensionByLanguage[nextLanguage];
-      const nextFileName = nextLanguage === "java" && activeDocument.content.includes("public static void main")
-        ? "Main.java"
-        : `untitled.${extension}`;
-      if (activeDocument.fileName !== nextFileName) {
-        updateActiveDocument((current) => ({ ...current, fileName: nextFileName }));
-      }
+    if (!activeDocument || activeDocument.filePath) {
+      return;
     }
-  }, [activeDocument, updateActiveDocument]);
+
+    const nextLanguage = inferDocumentLanguage(activeDocument.detection, activeDocument.executionMode);
+    let nextFileName: string;
+
+    if (nextLanguage === "java" && /\bpublic\s+static\s+void\s+main\s*\(/.test(activeDocument.content)) {
+      nextFileName = "Main.java";
+    } else {
+      const untitledIndex = parseUntitledIndex(activeDocument.fileName) ?? 1;
+      nextFileName = untitledFileName(untitledIndex, extensionByLanguage[nextLanguage]);
+    }
+
+    if (nextFileName === activeDocument.fileName) {
+      return;
+    }
+
+    setDocuments((current) => {
+      const uniqueName = ensureUniqueFileName(nextFileName, current, activeDocument.id);
+      return current.map((document) => (
+        document.id === activeDocument.id
+          ? { ...document, fileName: uniqueName }
+          : document
+      ));
+    });
+  }, [activeDocument, documents]);
 
   useEffect(() => {
-    if (!activeDocument) {
-      return;
+    if (isRunning) {
+      setConsoleHeight((current) => {
+        const minHeight = Math.max(170, Math.round(window.innerHeight * 0.2));
+        return Math.max(current, minHeight);
+      });
     }
-    const nextLanguage = inferDocumentLanguage(activeDocument.detection, activeDocument.executionMode);
-    setExecutionSummary((current) => (current.title === "Idle" ? current : current));
-    if (activeDocument.executionMode === "auto") {
-      // Keep toolbar and editor language in sync with the detected value.
-      if (nextLanguage !== activeDocument.detection?.language && !activeDocument.detection?.isAmbiguous) {
-        setDocuments((current) => current.map((document) => document.id === activeDocument.id ? { ...document, executionMode: "auto" } : document));
+  }, [isRunning]);
+
+  useEffect(() => {
+    function handleMouseMove(event: MouseEvent): void {
+      if (isDraggingConsoleRef.current && editorColumnRef.current) {
+        const bounds = editorColumnRef.current.getBoundingClientRect();
+        const minHeight = 140;
+        const maxHeight = Math.max(190, Math.floor(bounds.height * 0.55));
+        const nextHeight = Math.min(maxHeight, Math.max(minHeight, bounds.bottom - event.clientY));
+        setConsoleHeight(nextHeight);
+      }
+
+      if (isDraggingExplorerRef.current && workspaceShellRef.current) {
+        const bounds = workspaceShellRef.current.getBoundingClientRect();
+        const minWidth = 180;
+        const maxWidth = Math.min(420, Math.floor(bounds.width * 0.45));
+        const nextWidth = Math.min(maxWidth, Math.max(minWidth, event.clientX - bounds.left));
+        setExplorerWidth(nextWidth);
       }
     }
-  }, [activeDocument]);
 
-  const activeSidebarLabel = sidebarItems.find((item) => item.id === sidebarSection)?.label ?? "Explorer";
-  const activeUtilityLabel = utilityTabs.find((item) => item.id === utilityTab)?.label ?? "Input";
-  const activeConsoleLabel = consoleTabs.find((item) => item.id === consoleTab)?.label ?? "Output";
-  const hasDocuments = documents.length > 0;
+    function handleMouseUp(): void {
+      if (isDraggingConsoleRef.current) {
+        isDraggingConsoleRef.current = false;
+        setIsResizingConsole(false);
+      }
 
-  function closeDocument(documentId: string): void {
-    if (documents.length === 1) {
-      createNewDocument();
+      if (isDraggingExplorerRef.current) {
+        isDraggingExplorerRef.current = false;
+        setIsResizingExplorer(false);
+      }
+    }
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isResizingExplorer) {
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
       return;
     }
 
-    setDocuments((current) => current.filter((document) => document.id !== documentId));
-    if (documentId === activeDocumentId) {
-      const remaining = documents.filter((document) => document.id !== documentId);
-      setActiveDocumentId(remaining[0]?.id ?? activeDocumentId);
+    if (isResizingConsole) {
+      document.body.style.cursor = "row-resize";
+      document.body.style.userSelect = "none";
+      return;
     }
+
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [isResizingConsole, isResizingExplorer]);
+
+  function closeDocument(documentId: string): void {
+    setDocuments((current) => {
+      const index = current.findIndex((document) => document.id === documentId);
+      const remaining = current.filter((document) => document.id !== documentId);
+
+      if (remaining.length === 0) {
+        const id = newDocumentId();
+        setActiveDocumentId(id);
+        return [
+          createDocument({
+            id,
+            filePath: null,
+            fileName: "untitled.py",
+            content: "",
+            executionMode: "auto",
+            detection: null,
+            diagnostics: [],
+            dirty: false
+          })
+        ];
+      }
+
+      if (documentId === activeDocumentId) {
+        const fallback = remaining[Math.max(0, index - 1)] ?? remaining[0];
+        if (fallback) {
+          setActiveDocumentId(fallback.id);
+        }
+      }
+
+      return remaining;
+    });
   }
 
   function switchDocument(documentId: string): void {
     setActiveDocumentId(documentId);
-    setDrawerCollapsed(true);
+    setFocusLine(null);
   }
 
-  function addRecentFile(name: string): void {
-    setRecentFiles((current) => [name, ...current.filter((entry) => entry !== name)].slice(0, 8));
+  function toggleFolder(folderPath: string): void {
+    setCollapsedFolders((current) => ({ ...current, [folderPath]: !current[folderPath] }));
   }
 
-  function handleInsertExample(exampleCode: string): void {
-    updateActiveDocument((current) => ({
-      ...current,
-      content: exampleCode,
-      filePath: null,
-      fileName: current.fileName,
-      executionMode: "auto",
-      detection: null,
-      diagnostics: [],
-      dirty: true
-    }));
-    setDrawerCollapsed(false);
-    setSidebarSection("explorer");
+  function renderExplorerNodes(nodes: ExplorerNode[]): JSX.Element {
+    return (
+      <ul className="explorer-tree">
+        {nodes.map((node) => (
+          <li key={node.path}>
+            {node.type === "directory" ? (
+              <button type="button" className="explorer-node folder" onClick={() => toggleFolder(node.path)}>
+                <span className="explorer-caret">{collapsedFolders[node.path] ? "▸" : "▾"}</span>
+                <span>{node.name}</span>
+              </button>
+            ) : (
+              <button type="button" className="explorer-node file" onClick={() => { void openFromExplorer(node.path); }} title={node.path}>
+                <span className="explorer-caret">•</span>
+                <span>{node.name}</span>
+              </button>
+            )}
+            {node.type === "directory" && !collapsedFolders[node.path] && node.children && node.children.length > 0 ? renderExplorerNodes(node.children) : null}
+          </li>
+        ))}
+      </ul>
+    );
   }
 
-  const currentLanguage = effectiveLanguage;
-  const currentDocumentIndex = documents.findIndex((document) => document.id === activeDocumentId);
+  function beginConsoleResize(event: React.MouseEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    isDraggingConsoleRef.current = true;
+    setIsResizingConsole(true);
+  }
+
+  function beginExplorerResize(event: React.MouseEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    isDraggingExplorerRef.current = true;
+    setIsResizingExplorer(true);
+  }
 
   return (
     <main className="app-shell">
       <Toolbar
         fileName={activeDocument?.fileName ?? "untitled.py"}
         executionMode={activeDocument?.executionMode ?? "auto"}
-        detectedLanguage={activeDetection?.language ?? currentLanguage}
-        detectionConfidence={activeDetection?.confidence ?? 0}
-        isAmbiguous={Boolean(activeDetection?.isAmbiguous)}
+        detectedLanguage={effectiveLanguage}
+        autoDetectedLabel={autoDetectedLabel}
         isRunning={isRunning}
-        onOpen={handleOpen}
+        fontSize={editorFontSize}
+        onFontSizeChange={setEditorFontSize}
         onSave={handleSave}
         onRun={handleRun}
         onStop={handleStop}
@@ -596,159 +837,105 @@ export default function App() {
         </div>
       ) : null}
 
-      <section className="workspace-frame">
-        <aside className="activity-bar" aria-label="Workspace sections">
-          {sidebarItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`activity-button ${sidebarSection === item.id ? "active" : ""}`}
-              onClick={() => setSidebarSection(item.id)}
-              title={item.shortcut}
-            >
-              {item.label}
-            </button>
-          ))}
-        </aside>
-
-        <section className="editor-column">
-          <div className="editor-strip">
-            <div className="editor-title-row">
-              <div className="editor-brand">
-                <img className="header-brandmark" src={brandingAsset("kindredlogo.png")} alt="Kindred" />
-                <div>
-                  <div className="editor-kicker">Kindred</div>
-                  <h2>{activeDocument?.fileName ?? "Untitled"}</h2>
-                </div>
+      <section className="workspace-shell" ref={workspaceShellRef}>
+        {showExplorerPanel ? (
+          <>
+            <aside className="explorer-panel" style={{ width: explorerWidth }}>
+              <div className="explorer-header">
+                <span>{workspaceRootName}</span>
+                <button type="button" className="btn ghost" onClick={() => setExplorerVisible(false)}>Hide</button>
               </div>
-              <div className="editor-status-group">
-                <span className={`status-pill ${isRunning ? "running" : currentLanguage === "plaintext" ? "neutral" : "ready"}`}>{isRunning ? "Running..." : languageNames[currentLanguage]}</span>
-                {activeDetection ? <span className="status-chip" title={`Confidence ${Math.round(activeDetection.confidence * 100)}%`}>{`${Math.round(activeDetection.confidence * 100)}% confidence`}</span> : null}
+              <div className="explorer-body">
+                {workspaceTree.length > 0 ? renderExplorerNodes(workspaceTree) : <p className="explorer-empty">Folder is empty.</p>}
               </div>
-            </div>
+            </aside>
+            <div className="explorer-splitter" onMouseDown={beginExplorerResize} role="separator" aria-label="Resize explorer" aria-orientation="vertical" />
+          </>
+        ) : null}
 
-            <div className="document-tabs" role="tablist" aria-label="Open files">
-              {documents.map((document, index) => (
+        <section className="editor-column" ref={editorColumnRef} style={editorColumnStyle}>
+          <div className="document-tabs" role="tablist" aria-label="Open files">
+            {documents.map((document) => (
+              <div
+                key={document.id}
+                className={`document-tab ${document.id === activeDocumentId ? "active" : ""}`}
+                role="tab"
+                aria-selected={document.id === activeDocumentId}
+                tabIndex={0}
+                onClick={() => switchDocument(document.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    switchDocument(document.id);
+                  }
+                }}
+                title={document.filePath ?? "Unsaved document"}
+              >
+                <span className="document-tab-title">{document.fileName}</span>
+                {document.dirty ? <span className="document-dirty">●</span> : null}
                 <button
-                  key={document.id}
                   type="button"
-                  className={`document-tab ${document.id === activeDocumentId ? "active" : ""}`}
-                  onClick={() => switchDocument(document.id)}
-                  title={document.filePath ?? "Unsaved document"}
+                  className="document-close"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeDocument(document.id);
+                  }}
+                  aria-label={`Close ${document.fileName}`}
                 >
-                  <span className="document-tab-title">{document.fileName}</span>
-                  {document.dirty ? <span className="document-dirty">●</span> : null}
-                  <button
-                    type="button"
-                    className="document-close"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      closeDocument(document.id);
-                    }}
-                    aria-label={`Close ${document.fileName}`}
-                  >
-                    ×
-                  </button>
-                  {index === currentDocumentIndex ? <span className="document-active-indicator" /> : null}
+                  ×
                 </button>
-              ))}
-              <button type="button" className="document-tab new-tab" onClick={() => createNewDocument()}>
-                + New
-              </button>
-            </div>
+              </div>
+            ))}
+            <button type="button" className="document-new" onClick={createNewDocument} title="New file">+</button>
           </div>
 
           <div className="editor-stage">
+            {isStarterVisible ? (
+              <div className="editor-empty-state">
+                <p className="editor-empty-title">Choose a language or start typing.</p>
+                <p className="editor-empty-copy">You can drop in a file, switch the mode, or load a starter template.</p>
+                <div className="editor-empty-actions">
+                  <button type="button" className="btn" onClick={() => loadStarterTemplate("python")}>Python Hello World</button>
+                  <button type="button" className="btn" onClick={() => loadStarterTemplate("c")}>C Hello World</button>
+                  <button type="button" className="btn" onClick={() => loadStarterTemplate("java")}>Java Main</button>
+                </div>
+              </div>
+            ) : null}
             {activeDocument ? (
               <EditorPane
                 value={activeDocument.content}
                 onChange={handleDocumentChange}
-                language={currentLanguage}
+                language={effectiveLanguage}
                 diagnostics={activeDocument.diagnostics}
+                focusLine={focusLine}
+                onFocusLineHandled={() => setFocusLine(null)}
+                fontSize={editorFontSize}
+                placeholder={"// Start typing your code here..."}
               />
             ) : null}
           </div>
+
+          <div className="console-splitter" onMouseDown={beginConsoleResize} role="separator" aria-label="Resize output panel" aria-orientation="horizontal" />
 
           <ConsolePane
             output={output}
             error={error}
             command={command}
             durationMs={durationMs}
+            exitCode={exitCode}
             logs={logs}
             errorInsights={errorInsights}
             summary={executionSummary}
             isRunning={isRunning}
             stdin={stdin}
+            onStdinChange={setStdin}
+            diagnostics={activeDocument?.diagnostics ?? []}
+            onSelectDiagnostic={(line) => setFocusLine(line)}
             activeTab={consoleTab}
             onTabChange={setConsoleTab}
           />
         </section>
-
-        <aside className={`utility-drawer ${drawerCollapsed ? "collapsed" : "open"}`}>
-          <div className="utility-drawer-header">
-            <div>
-              <div className="panel-kicker">Utility Drawer</div>
-              <h2>{activeUtilityLabel}</h2>
-            </div>
-            <button type="button" className="btn ghost" onClick={() => setDrawerCollapsed((current) => !current)}>
-              {drawerCollapsed ? "Open" : "Collapse"}
-            </button>
-          </div>
-
-          <div className="utility-tabs">
-            {utilityTabs.map((tab) => (
-              <button key={tab.id} type="button" className={`utility-tab ${utilityTab === tab.id ? "active" : ""}`} onClick={() => setUtilityTab(tab.id)}>
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="utility-drawer-body">
-            {utilityTab === "input" ? <StdinPanel value={stdin} onChange={setStdin} /> : null}
-            {utilityTab === "tests" ? (
-              <section className="drawer-section">
-                <div className="drawer-section-title">Tests</div>
-                <p>Run the current document, inspect runtime output, and use the Problems tab for parsed diagnostics.</p>
-                <button type="button" className="btn primary" onClick={handleRun} disabled={isRunning || !canRun}>Run current file</button>
-              </section>
-            ) : null}
-            {utilityTab === "docs" ? (
-              <section className="drawer-section">
-                <div className="drawer-section-title">Docs</div>
-                <p>Use the Explorer to switch files, the Console tabs to inspect problems, and the sidebar shortcuts to stay in control.</p>
-              </section>
-            ) : null}
-          </div>
-        </aside>
       </section>
-
-      <footer className="workspace-footer">
-        <div className="footer-brand">
-          <img className="footer-brandmark" src={brandingAsset("kindred_logo_name.png")} alt="Kindred" />
-        </div>
-        <div className="footer-meta">
-          <span>{activeSidebarLabel}</span>
-          <span>{activeConsoleLabel}</span>
-          <span>{drawerCollapsed ? "Drawer collapsed" : "Drawer open"}</span>
-        </div>
-      </footer>
-
-      {!hasDocuments ? (
-        <div className="welcome-surface">
-          <div className="welcome-card">
-            <img className="welcome-brand" src={brandingAsset("kindred_logo_name.png")} alt="Kindred" />
-            <h2>Run code instantly. No setup.</h2>
-            <p>Open multiple files, switch tabs, and stay in control with a professional local-first IDE workflow.</p>
-            <div className="welcome-actions">
-              <button type="button" className="btn primary" onClick={() => handleNewFile()}>New Python file</button>
-              <button type="button" className="btn ghost" onClick={() => handleOpen()}>Open file</button>
-            </div>
-            <div className="welcome-list compact">
-              {recentFiles.slice(0, 5).map((file) => <span key={file}>{file}</span>)}
-            </div>
-          </div>
-        </div>
-      ) : null}
     </main>
   );
 }

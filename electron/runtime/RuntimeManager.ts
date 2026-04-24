@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { RunCodeRequest, RunCodeResult } from "../types";
+import { RunCodeRequest, RunCodeResult, RuntimeStatusResult } from "../types";
 import { DependencyInstallMode, prepareDependencies } from "./dependencyManager";
 import { analyzeErrorOutput } from "./errorAnalyzer";
 import { ExecutionLogger } from "./executionLogger";
@@ -338,4 +338,28 @@ export async function runCode(request: RunCodeRequest, options: RunCodeOptions):
 
 export function stopExecution(): { stopped: boolean } {
   return { stopped: stopRunningProcesses() };
+}
+
+export async function getRuntimeStatus(options: Pick<RunCodeOptions, "appRoot" | "managedRuntimeRoot" | "resourceRoot">): Promise<RuntimeStatusResult> {
+  const resolution = await resolveRuntimes(["python", "node", "cCompiler", "cppCompiler", "javaCompiler", "javaRuntime"], options);
+  const entries = [
+    { key: "python", label: "Python" },
+    { key: "node", label: "JavaScript" },
+    { key: "cCompiler", label: "C via TinyCC" },
+    { key: "cppCompiler", label: "C++" },
+    { key: "javaCompiler", label: "Java compiler" },
+    { key: "javaRuntime", label: "Java runtime" }
+  ].map((entry) => {
+    const resolved = resolution.resolved[entry.key as keyof typeof resolution.resolved];
+    const attempt = [...resolution.attempts].reverse().find((candidate) => candidate.key === entry.key);
+    return {
+      label: entry.label,
+      ready: Boolean(resolved),
+      detail: resolved
+        ? `${resolved.source === "local" ? "Local" : "Managed"} ${resolved.command}`
+        : attempt?.detail ?? "Unavailable"
+    };
+  });
+
+  return { entries };
 }

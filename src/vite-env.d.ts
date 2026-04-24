@@ -4,7 +4,7 @@ import type { KindredApi } from "./types";
 
 declare global {
   interface Window {
-    kindredAPI: KindredApi;
+    kindredAPI?: KindredApi;
   }
 }
 

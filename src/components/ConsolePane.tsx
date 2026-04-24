@@ -1,16 +1,20 @@
 import { useMemo } from "react";
-import { ConsoleTab, ErrorInsight, ExecutionLogEntry, ExecutionSummary } from "../types";
+import { ConsoleTab, EditorDiagnostic, ErrorInsight, ExecutionLogEntry, ExecutionSummary } from "../types";
 
 interface ConsolePaneProps {
   output: string;
   error: string;
   command: string;
   durationMs: number;
+  exitCode: number | null;
   logs: ExecutionLogEntry[];
   errorInsights: ErrorInsight[];
   summary: ExecutionSummary;
   isRunning: boolean;
   stdin: string;
+  onStdinChange: (value: string) => void;
+  diagnostics: EditorDiagnostic[];
+  onSelectDiagnostic: (line: number) => void;
   activeTab: ConsoleTab;
   onTabChange: (tab: ConsoleTab) => void;
 }
@@ -36,37 +40,55 @@ function humanizeLogStep(step: string): string {
   }
 }
 
-export default function ConsolePane({ output, error, command, durationMs, logs, errorInsights, summary, isRunning, stdin, activeTab, onTabChange }: ConsolePaneProps) {
+export default function ConsolePane({ output, error, command, durationMs, exitCode, logs, errorInsights, summary, isRunning, stdin, onStdinChange, diagnostics, onSelectDiagnostic, activeTab, onTabChange }: ConsolePaneProps) {
 
   const readableLogs = useMemo(() => {
     return logs.map((log) => `[${log.at}] ${humanizeLogStep(log.step)}: ${log.detail}`).join("\n");
   }, [logs]);
 
+  const statusIcon = summary.tone === "success" ? "✔" : summary.tone === "error" ? "✖" : isRunning ? "▶" : "●";
+  const stateMessage = isRunning
+    ? "Running…"
+    : command
+      ? `${summary.title} • ${summary.detail} • Exit code ${exitCode ?? (summary.tone === "success" ? "0" : "1")}`
+      : "Idle";
+  const terminalPrompt = isRunning ? "Program running..." : "Terminal ready.";
+
   return (
     <section className="console-pane" aria-label="Execution output" tabIndex={-1}>
       <div className="console-header">
         <div className={`console-summary ${summary.tone}`}>
-          <span className="summary-title">{summary.title}</span>
-          <span className="summary-detail">{summary.detail}</span>
-        </div>
-        <div className="console-meta-stack">
-          <span className="console-meta">{isRunning ? "Running..." : command ? `Exit code: ${summary.tone === "success" ? 0 : "1"}` : "Idle"}</span>
-          <span className="console-meta">{durationMs > 0 ? `Completed in ${durationMs} ms` : "Ready"}</span>
+          <span className="summary-icon" aria-hidden="true">{statusIcon}</span>
+          <span className="summary-title">{stateMessage}</span>
         </div>
       </div>
       <div className="console-tabs" role="tablist" aria-label="Console views">
         <button type="button" className={`console-tab ${activeTab === "output" ? "active" : ""}`} onClick={() => onTabChange("output")}>Output</button>
         <button type="button" className={`console-tab ${activeTab === "problems" ? "active" : ""}`} onClick={() => onTabChange("problems")}>Problems</button>
-        <button type="button" className={`console-tab ${activeTab === "input" ? "active" : ""}`} onClick={() => onTabChange("input")}>Input</button>
+        <button type="button" className={`console-tab ${activeTab === "terminal" ? "active" : ""}`} onClick={() => onTabChange("terminal")}>Terminal</button>
         <button type="button" className={`console-tab ${activeTab === "logs" ? "active" : ""}`} onClick={() => onTabChange("logs")}>Logs</button>
       </div>
       <div className="console-body">
-        {activeTab === "output" ? <pre className="console-output">{output || "No output"}</pre> : null}
+        {activeTab === "output" ? <pre className="console-output">{output || "No output yet\nClick Run to execute your program."}</pre> : null}
         {activeTab === "problems" ? (
           <div className="problem-list">
+            {diagnostics.length > 0 ? (
+              <section className="result-block">
+                <h3 className="result-title warning">Diagnostics</h3>
+                <ul className="diagnostic-list">
+                  {diagnostics.map((diagnostic, index) => (
+                    <li key={`${diagnostic.line}-${diagnostic.column ?? 0}-${index}`}>
+                      <button type="button" className="diagnostic-item" onClick={() => onSelectDiagnostic(diagnostic.line)}>
+                        Line {diagnostic.line}: {diagnostic.message}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
             <section className="result-block success-block">
               <h3 className="result-title success">Output</h3>
-              <pre className="console-output">{output || "No output"}</pre>
+              <pre className="console-output">{output || "No output yet\nClick Run to execute your program."}</pre>
             </section>
             <section className="result-block warning-block">
               <h3 className="result-title warning">Errors</h3>
@@ -78,6 +100,9 @@ export default function ConsolePane({ output, error, command, durationMs, logs, 
                   <div key={`${insight.category}-${insight.title}`} className="error-insight">
                     <div className="error-insight-title">{insight.title}</div>
                     <div className="error-insight-body">{insight.explanation}</div>
+                    {insight.probableCause ? <div className="error-insight-meta"><strong>Probable cause:</strong> {insight.probableCause}</div> : null}
+                    {insight.suggestedFix ? <div className="error-insight-meta"><strong>Suggested fix:</strong> {insight.suggestedFix}</div> : null}
+                    {insight.patchPreview ? <pre className="console-output console-log error-patch-preview">{insight.patchPreview}</pre> : null}
                     {insight.suggestions.length > 0 ? (
                       <ul className="error-insight-list">
                         {insight.suggestions.map((suggestion) => (
@@ -91,9 +116,24 @@ export default function ConsolePane({ output, error, command, durationMs, logs, 
             ) : null}
           </div>
         ) : null}
-        {activeTab === "input" ? <pre className="console-output console-log">{stdin || "No program input"}</pre> : null}
+        {activeTab === "terminal" ? (
+          <div className="terminal-view">
+            <pre className="console-output">{output || ""}</pre>
+            {error ? <pre className="console-output console-error">{error}</pre> : null}
+            <div className="terminal-prompt">{terminalPrompt}</div>
+            <pre className="console-output console-log">{stdin ? `> ${stdin}` : "> "}</pre>
+            <label className="stdin-label" htmlFor="terminal-stdin-input">Program Input (stdin)</label>
+            <textarea
+              id="terminal-stdin-input"
+              className="stdin-input terminal-stdin"
+              value={stdin}
+              onChange={(event) => onStdinChange(event.target.value)}
+              placeholder={"Example:\n42\nhello world\n\nEach line is sent to your program input."}
+            />
+          </div>
+        ) : null}
         {activeTab === "logs" ? (
-          <details className="advanced-logs" open>
+          <details className="advanced-logs">
             <summary>Advanced Logs</summary>
             <pre className="console-output console-log">{readableLogs || "No logs yet"}</pre>
           </details>

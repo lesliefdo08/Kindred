@@ -1,55 +1,69 @@
 # Kindred
 
-Kindred is a local-first desktop IDE for running Python, C, Java, and JavaScript with managed runtimes, confidence-based language detection, Monaco editing, and a control-oriented multi-file workspace.
+Kindred is a zero-setup desktop coding environment for fast experimentation. It keeps the editor first, execution local, and the workflow lightweight enough to trust.
 
-![Kindred](kindred_logo_name.png)
+Kindred — Zero-setup coding for fast experimentation.
 
-## Highlights
+## Features
 
-- Multi-file tabs with document state and quick file switching
-- Collapsible utility drawer for input, diagnostics, and workspace tools
-- Monaco editor with inline diagnostics markers
-- Run, stop, and keyboard shortcut control from the toolbar and menus
-- Confidence-scored language detection with manual override
-- Java auto-wrapping for main-only snippets
-- Local execution with TinyCC fallback for C
+- Editor-first layout with multi-file tabs
+- Auto language detection for Python, C, Java, and JavaScript
+- Inline diagnostics with click-to-line navigation
+- Integrated output, problems, terminal, and logs views
+- Interactive stdin in the terminal tab
+- Local runtime execution with managed fallbacks
+- Windows packaging with branded application assets
 
-## Getting Started
+## Screenshots
+
+Release screenshots live in [docs/screenshots](docs/screenshots/). Add these files before publishing:
+
+- `kindred-editor.png`
+- `kindred-run-output.png`
+- `kindred-error-analysis.png`
+
+## Installation
 
 ```bash
 npm install
 npm run dev
 ```
 
-### Useful Commands
+## Build
 
 ```bash
 npm run build
 npm run verify:core
+npm run verify:intelligence
 npm run dist:win
 npm run dist:win:portable
 ```
 
 ## Keyboard Shortcuts
 
-- `Ctrl+O` / `Cmd+O` open a file
+- `Ctrl+O` / `Cmd+O` open a folder
+- `Ctrl+Shift+O` / `Cmd+Shift+O` open a file
 - `Ctrl+S` / `Cmd+S` save the active document
+- `Ctrl+Enter` / `Cmd+Enter` run code
 - `Ctrl+R` / `Cmd+R` / `F5` run code
-- `Ctrl+1` focus Files
-- `Ctrl+2` focus Diagnostics
-- `Ctrl+3` focus Settings
-- `Ctrl+`` focus the console
+- `Ctrl+B` / `Cmd+B` toggle the explorer
+- `Ctrl+`` toggle the terminal tab
+
+## Roadmap
+
+- Auto-save toggle
+- Export current file
+- Download/save code bundle
+- Command palette refinements
+- Additional language/runtime hardening
 
 ## Project Layout
 
 - `src/` renderer UI and Monaco integration
 - `electron/` main process, IPC, file handling, and runtime execution
 - `resources/` packaged runtime assets
-- `release/` local build output, ignored from git history
-
-## Release Notes
-
-See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the latest UX and packaging changes.
+- `build/` packaged icons and release assets
+- `docs/screenshots/` release screenshot placeholders
 
 ## License
 

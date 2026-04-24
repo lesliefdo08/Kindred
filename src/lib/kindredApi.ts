@@ -1,4 +1,4 @@
-import type { DetectionResult, KindredApi, OpenFileResult, RunCodeRequest, RunCodeResult, SaveFileRequest, SaveFileResult } from "../types";
+import type { DetectionResult, KindredApi, MenuAction, OpenFileResult, OpenFolderResult, RunCodeRequest, RunCodeResult, RuntimeStatusResult, SaveFileRequest, SaveFileResult } from "../types";
 
 function unavailableError(operation: string): Error {
   return new Error(`Kindred bridge is unavailable. Cannot ${operation} outside the Electron shell.`);
@@ -7,6 +7,12 @@ function unavailableError(operation: string): Error {
 const fallbackApi: KindredApi = {
   openFile: async (): Promise<OpenFileResult | null> => {
     throw unavailableError("open files");
+  },
+  openFolder: async (): Promise<OpenFolderResult | null> => {
+    throw unavailableError("open folders");
+  },
+  readWorkspaceFile: async (_filePath: string): Promise<OpenFileResult | null> => {
+    throw unavailableError("read workspace files");
   },
   saveFile: async (_request: SaveFileRequest): Promise<SaveFileResult | null> => {
     throw unavailableError("save files");
@@ -19,6 +25,12 @@ const fallbackApi: KindredApi = {
   },
   stopRun: async (): Promise<{ stopped: boolean }> => {
     throw unavailableError("stop code execution");
+  },
+  checkRuntimeStatus: async (): Promise<RuntimeStatusResult> => {
+    throw unavailableError("check runtime status");
+  },
+  onMenuAction: (_action: MenuAction, _callback: () => void): (() => void) => {
+    throw unavailableError("listen to menu actions");
   }
 };
 

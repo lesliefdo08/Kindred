@@ -8,6 +8,10 @@ interface EditorPaneProps {
   onChange: (value: string) => void;
   language: SupportedLanguage;
   diagnostics?: EditorDiagnostic[];
+  focusLine?: number | null;
+  onFocusLineHandled?: () => void;
+  fontSize: number;
+  placeholder?: string;
   onEditorReady?: (editor: Monaco.editor.IStandaloneCodeEditor) => void;
 }
 
@@ -39,7 +43,7 @@ function markerSeverity(monaco: typeof Monaco, severity: EditorDiagnostic["sever
   }
 }
 
-export default function EditorPane({ value, onChange, language, diagnostics = [], onEditorReady }: EditorPaneProps) {
+export default function EditorPane({ value, onChange, language, diagnostics = [], focusLine = null, onFocusLineHandled, fontSize, placeholder, onEditorReady }: EditorPaneProps) {
   const monacoRef = useRef<typeof Monaco | null>(null);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monaco = useMonaco();
@@ -57,13 +61,14 @@ export default function EditorPane({ value, onChange, language, diagnostics = []
         { token: "type.identifier", foreground: "8ce0ff" }
       ],
       colors: {
-        "editor.background": "#0f1320",
-        "editor.foreground": "#e6edf7",
-        "editor.lineHighlightBackground": "#182033",
-        "editorLineNumber.foreground": "#54617d",
-        "editorCursor.foreground": "#9cc2ff",
-        "editor.selectionBackground": "#244466",
-        "editor.inactiveSelectionBackground": "#1d2f47"
+        "editor.background": "#10183a",
+        "editor.foreground": "#e8eeff",
+        "editor.lineHighlightBackground": "#18224366",
+        "editorLineNumber.foreground": "#50607f",
+        "editorLineNumber.activeForeground": "#8da0c9",
+        "editorCursor.foreground": "#93adff",
+        "editor.selectionBackground": "#30519c66",
+        "editor.inactiveSelectionBackground": "#263d7560"
       }
     });
   }
@@ -78,6 +83,7 @@ export default function EditorPane({ value, onChange, language, diagnostics = []
     if (editorRef.current && monacoRef.current) {
       const monacoLanguage = mapMonacoLanguage(language);
       monacoRef.current.editor.setModelLanguage(editorRef.current.getModel()!, monacoLanguage);
+      editorRef.current.focus();
     }
   }, [language]);
 
@@ -105,8 +111,20 @@ export default function EditorPane({ value, onChange, language, diagnostics = []
     );
   }, [diagnostics]);
 
+  useEffect(() => {
+    if (!editorRef.current || !focusLine || focusLine < 1) {
+      return;
+    }
+
+    editorRef.current.revealLineInCenter(focusLine);
+    editorRef.current.setPosition({ lineNumber: focusLine, column: 1 });
+    editorRef.current.focus();
+    onFocusLineHandled?.();
+  }, [focusLine, onFocusLineHandled]);
+
   return (
     <div className="editor-pane">
+      {!value.trim() && placeholder ? <div className="editor-placeholder">{placeholder}</div> : null}
       <Editor
         height="100%"
         beforeMount={handleBeforeMount}
@@ -121,13 +139,16 @@ export default function EditorPane({ value, onChange, language, diagnostics = []
         options={{
           minimap: { enabled: false },
           automaticLayout: true,
-          fontSize: 14,
-          fontFamily: "'Cascadia Code', 'SFMono-Regular', Consolas, monospace",
+          fontSize,
+          fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
           tabSize: 2,
-          wordWrap: "on",
+          wordWrap: "off",
           smoothScrolling: true,
           contextmenu: true,
           suggestOnTriggerCharacters: true,
+          scrollBeyondLastLine: false,
+          renderLineHighlight: "line",
+          cursorBlinking: "smooth",
           scrollbar: {
             verticalScrollbarSize: 8,
             horizontalScrollbarSize: 8

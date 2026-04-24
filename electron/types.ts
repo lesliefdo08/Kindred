@@ -32,6 +32,19 @@ export interface SaveFileResult {
   fileName: string;
 }
 
+export interface ExplorerNode {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  children?: ExplorerNode[];
+}
+
+export interface OpenFolderResult {
+  rootPath: string;
+  rootName: string;
+  entries: ExplorerNode[];
+}
+
 export interface RunCodeRequest {
   language: SupportedLanguage;
   code: string;
@@ -61,6 +74,9 @@ export interface ErrorInsight {
   title: string;
   explanation: string;
   suggestions: string[];
+  probableCause?: string;
+  suggestedFix?: string;
+  patchPreview?: string;
 }
 
 export interface RunCodeResult {
@@ -73,4 +89,14 @@ export interface RunCodeResult {
   validation: RuntimeValidationResult;
   logs: ExecutionLogEntry[];
   errorInsights: ErrorInsight[];
+}
+
+export interface RuntimeStatusEntry {
+  label: string;
+  ready: boolean;
+  detail: string;
+}
+
+export interface RuntimeStatusResult {
+  entries: RuntimeStatusEntry[];
 }

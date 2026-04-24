@@ -1,7 +1,7 @@
 {
   "name": "kindred",
   "version": "0.1.0",
-  "description": "Local-first lightweight code editor with integrated execution",
+  "description": "Kindred — Zero-setup coding for fast experimentation.",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
@@ -12,6 +12,7 @@
     "build:electron": "esbuild electron/main.ts electron/preload.ts --bundle --platform=node --target=node20 --format=cjs --outdir=dist-electron --external:electron",
     "preview": "vite preview",
     "verify:core": "tsx tests/runtime-harness.ts",
+    "verify:intelligence": "tsx tests/intelligence-harness.ts",
     "dist:win": "npm run build && electron-builder --win nsis --publish never",
     "dist:win:portable": "npm run build && electron-builder --win portable --publish never",
     "postinstall": "node scripts/bootstrap-tcc.js && node scripts/bootstrap-mingw.js"
@@ -57,15 +58,23 @@
       "dist/**",
       "dist-electron/**",
       "resources/**",
+      "build/icons/**",
+      "kindredlogo.png",
+      "kindred_logo.ico",
+      "kindred_logo_name.png",
       "package.json"
     ],
     "win": {
+      "icon": "build/icons/kindred.ico",
       "signAndEditExecutable": false,
       "target": [
         "nsis"
       ]
     },
     "nsis": {
+      "installerIcon": "build/icons/kindred.ico",
+      "uninstallerIcon": "build/icons/kindred.ico",
+      "installerHeaderIcon": "build/icons/kindred.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }

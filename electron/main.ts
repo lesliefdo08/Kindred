@@ -1,17 +1,30 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { detectLanguage } from "./languageDetector";
-import { openFile, saveFile } from "./fileService";
-import { runCode, stopExecution } from "./runtime/RuntimeManager";
+import { openFile, openFolder, readWorkspaceFile, saveFile } from "./fileService";
+import { getRuntimeStatus, runCode, stopExecution } from "./runtime/RuntimeManager";
 import { RunCodeRequest, SaveFileRequest } from "./types";
 
 const dependencyInstallMode = (process.env.KINDRED_DEP_INSTALL_MODE as "prompt" | "auto" | "off" | undefined) ?? "prompt";
 
 app.setName("Kindred");
+app.setAppUserModelId("com.kindred.ide");
 
 function getAppIconPath(): string {
-  const packagedRoot = app.isPackaged ? process.resourcesPath : app.getAppPath();
-  return path.join(packagedRoot, "kindredlogo.png");
+  const appRoot = app.getAppPath();
+  const iconCandidates = process.platform === "win32"
+    ? [
+        path.join(appRoot, "build", "icons", "kindred.ico"),
+        path.join(appRoot, "build", "icons", "kindred_logo.ico"),
+        path.join(appRoot, "kindred_logo.ico")
+      ]
+    : [
+        path.join(appRoot, "kindredlogo.png"),
+        path.join(appRoot, "kindred_logo_name.png")
+      ];
+
+  return iconCandidates.find((candidate) => existsSync(candidate)) ?? iconCandidates[0];
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -71,6 +84,7 @@ function createApplicationMenu(): void {
     {
       label: "File",
       submenu: [
+        { label: "Open Folder", accelerator: "Shift+CmdOrCtrl+O", click: () => mainWindow?.webContents.send("menu:openFolder") },
         { label: "Open", accelerator: "CmdOrCtrl+O", click: () => mainWindow?.webContents.send("menu:open") },
         { label: "Save", accelerator: "CmdOrCtrl+S", click: () => mainWindow?.webContents.send("menu:save") },
         { type: "separator" },
@@ -109,7 +123,7 @@ function showAboutDialog(): void {
     title: "About Kindred",
     message: "Kindred",
     icon: getAppIconPath(),
-    detail: `A premium local-first IDE with managed runtimes and confidence-based language detection.\n\nVersion: ${appVersion}\n\nPython, C (with TinyCC), and Java execution.\n\nMIT License • https://github.com/lesliefdo08/Kindred`
+    detail: `Kindred — Zero-setup coding for fast experimentation.\n\nVersion: ${appVersion}\n\nPython, C (with TinyCC), Java, and JavaScript.\n\nMIT License • https://github.com/lesliefdo08/Kindred`
   });
 }
 
@@ -126,6 +140,10 @@ function checkForUpdates(): void {
 
 function registerIpcHandlers(): void {
   ipcMain.handle("file:open", async () => openFile());
+
+  ipcMain.handle("file:openFolder", async () => openFolder());
+
+  ipcMain.handle("file:readWorkspaceFile", async (_, filePath: string) => readWorkspaceFile(filePath));
 
   ipcMain.handle("file:save", async (_, request: SaveFileRequest) => saveFile(request));
 
@@ -171,11 +189,23 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle("runtime:stop", async () => stopExecution());
+
+  ipcMain.handle("runtime:status", async () => {
+    const appRoot = app.getAppPath();
+    const managedRuntimeRoot = path.join(app.getPath("userData"), "managed-runtimes");
+    const resourceRoot = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, "..");
+
+    return getRuntimeStatus({
+      appRoot,
+      managedRuntimeRoot,
+      resourceRoot
+    });
+  });
 }
 
 app.whenReady().then(() => {
   registerIpcHandlers();
-  createApplicationMenu();
+  Menu.setApplicationMenu(null);
   mainWindow = createMainWindow();
 
   app.on("activate", () => {
