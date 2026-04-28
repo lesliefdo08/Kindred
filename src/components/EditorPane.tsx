@@ -11,7 +11,6 @@ interface EditorPaneProps {
   focusLine?: number | null;
   onFocusLineHandled?: () => void;
   fontSize: number;
-  placeholder?: string;
   onEditorReady?: (editor: Monaco.editor.IStandaloneCodeEditor) => void;
 }
 
@@ -43,7 +42,7 @@ function markerSeverity(monaco: typeof Monaco, severity: EditorDiagnostic["sever
   }
 }
 
-export default function EditorPane({ value, onChange, language, diagnostics = [], focusLine = null, onFocusLineHandled, fontSize, placeholder, onEditorReady }: EditorPaneProps) {
+export default function EditorPane({ value, onChange, language, diagnostics = [], focusLine = null, onFocusLineHandled, fontSize, onEditorReady }: EditorPaneProps) {
   const monacoRef = useRef<typeof Monaco | null>(null);
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monaco = useMonaco();
@@ -124,7 +123,6 @@ export default function EditorPane({ value, onChange, language, diagnostics = []
 
   return (
     <div className="editor-pane">
-      {!value.trim() && placeholder ? <div className="editor-placeholder">{placeholder}</div> : null}
       <Editor
         height="100%"
         beforeMount={handleBeforeMount}

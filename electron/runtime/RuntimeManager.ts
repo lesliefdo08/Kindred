@@ -6,7 +6,7 @@ import { DependencyInstallMode, prepareDependencies } from "./dependencyManager"
 import { analyzeErrorOutput } from "./errorAnalyzer";
 import { ExecutionLogger } from "./executionLogger";
 import { DockerExecutionAdapter } from "./containerExecutionAdapter";
-import { LocalProcessExecutionAdapter, stopRunningProcesses } from "./localExecutionAdapter";
+import { LocalProcessExecutionAdapter, StreamCallbacks, stopRunningProcesses } from "./localExecutionAdapter";
 import { RuntimeContext, runtimeStrategies } from "./runtimeStrategies";
 import { resolveRuntimes } from "./runtimeResolver";
 
@@ -18,6 +18,7 @@ export interface RunCodeOptions {
   installMode?: DependencyInstallMode;
   executionTimeoutMs?: number;
   confirmInstall?: (request: { language: RunCodeRequest["language"]; packages: string[]; cachePath: string }) => Promise<boolean>;
+  streamCallbacks?: StreamCallbacks;
 }
 
 const AUTO_CONFIDENCE_THRESHOLD = 0.6;
@@ -179,6 +180,41 @@ async function runForLanguage(
         };
       }
 
+      if (language === "c" && process.platform === "win32" && /tcc(?:\.exe)?$/i.test(compiler.command)) {
+        const runArgs = [...compiler.argsPrefix, "-run", sourcePath];
+        logger.log("execute", commandText(compiler.command, runArgs));
+        const runResult = await processAdapter.execute(compiler.command, runArgs, tmpDir, {
+          env: { ...process.env, ...dependencyResolution.env },
+          timeoutMs: executionTimeoutMs,
+          stdin: request.stdin
+        }, options.streamCallbacks);
+
+        const crashNote = runtimeCrashMessage(language, runResult.stderr, runResult.exitCode);
+        const stderr = combineStderr([runtimeNotice, crashNote ?? "", runResult.stderr]);
+
+        if (runResult.exitCode === 0) {
+          logger.log("execute-success", "Execution completed successfully");
+        } else if (runResult.exitCode === 124) {
+          logger.log("execute-timeout", "Execution stopped: possible infinite loop.");
+        } else if (crashNote) {
+          logger.log("execute-crash", crashNote);
+        } else {
+          logger.log("execute-failed", runResult.stderr || "Execution failed");
+        }
+
+        return {
+          ok: runResult.exitCode === 0,
+          command: commandText(compiler.command, runArgs),
+          stdout: runResult.stdout,
+          stderr,
+          exitCode: runResult.exitCode,
+          durationMs: Date.now() - startedAt,
+          validation,
+          logs: logger.entries(),
+          errorInsights: analyzeErrorOutput(language, stderr)
+        };
+      }
+
       const compileArgs = [...compiler.argsPrefix, ...strategy.compileCommand.args(context)];
       logger.log("compile", commandText(compiler.command, compileArgs));
       const compileResult = await processAdapter.execute(compiler.command, compileArgs, tmpDir, {
@@ -239,7 +275,7 @@ async function runForLanguage(
       env: { ...process.env, ...dependencyResolution.env },
       timeoutMs: executionTimeoutMs,
       stdin: request.stdin
-    });
+    }, options.streamCallbacks);
 
     const crashNote = runtimeCrashMessage(language, runResult.stderr, runResult.exitCode);
     const stderr = combineStderr([runtimeNotice, compileStderr, crashNote ?? "", runResult.stderr]);

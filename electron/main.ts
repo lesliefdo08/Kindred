@@ -1,43 +1,39 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
-import { existsSync } from "node:fs";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from "electron";
 import path from "node:path";
+import { autoUpdater } from "electron-updater";
 import { detectLanguage } from "./languageDetector";
 import { openFile, openFolder, readWorkspaceFile, saveFile } from "./fileService";
 import { getRuntimeStatus, runCode, stopExecution } from "./runtime/RuntimeManager";
+import { writeToRunningProcess } from "./runtime/localExecutionAdapter";
 import { RunCodeRequest, SaveFileRequest } from "./types";
 
 const dependencyInstallMode = (process.env.KINDRED_DEP_INSTALL_MODE as "prompt" | "auto" | "off" | undefined) ?? "prompt";
+const autoUpdateEnabled = process.env.KINDRED_AUTO_UPDATE !== "0";
 
 app.setName("Kindred");
 app.setAppUserModelId("com.kindred.ide");
 
 function getAppIconPath(): string {
-  const appRoot = app.getAppPath();
-  const iconCandidates = process.platform === "win32"
-    ? [
-        path.join(appRoot, "build", "icons", "kindred.ico"),
-        path.join(appRoot, "build", "icons", "kindred_logo.ico"),
-        path.join(appRoot, "kindred_logo.ico")
-      ]
-    : [
-        path.join(appRoot, "kindredlogo.png"),
-        path.join(appRoot, "kindred_logo_name.png")
-      ];
-
-  return iconCandidates.find((candidate) => existsSync(candidate)) ?? iconCandidates[0];
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "kindred_logo.ico")
+    : path.join(app.getAppPath(), "kindred_logo.ico");
 }
 
 let mainWindow: BrowserWindow | null = null;
 
 function createMainWindow(): BrowserWindow {
+  const iconPath = getAppIconPath();
+  const icon = nativeImage.createFromPath(iconPath);
   const window = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 900,
     minHeight: 620,
     show: false,
+    frame: false,
+    titleBarStyle: "hidden",
     backgroundColor: "#0b0f16",
-    icon: getAppIconPath(),
+    icon,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -57,11 +53,28 @@ function createMainWindow(): BrowserWindow {
   }
 
   window.once("ready-to-show", () => {
+    window.setIcon(icon);
     window.show();
   });
 
   window.on("closed", () => {
     mainWindow = null;
+  });
+
+  window.on("maximize", () => {
+    window.webContents.send("window:maximizeChanged", true);
+  });
+
+  window.on("unmaximize", () => {
+    window.webContents.send("window:maximizeChanged", false);
+  });
+
+  window.on("focus", () => {
+    window.webContents.send("window:focusChanged", true);
+  });
+
+  window.on("blur", () => {
+    window.webContents.send("window:focusChanged", false);
   });
 
   return window;
@@ -85,6 +98,7 @@ function createApplicationMenu(): void {
       label: "File",
       submenu: [
         { label: "Open Folder", accelerator: "Shift+CmdOrCtrl+O", click: () => mainWindow?.webContents.send("menu:openFolder") },
+        { label: "Close Folder", accelerator: "CmdOrCtrl+K CmdOrCtrl+F", click: () => mainWindow?.webContents.send("menu:closeFolder") },
         { label: "Open", accelerator: "CmdOrCtrl+O", click: () => mainWindow?.webContents.send("menu:open") },
         { label: "Save", accelerator: "CmdOrCtrl+S", click: () => mainWindow?.webContents.send("menu:save") },
         { type: "separator" },
@@ -116,6 +130,37 @@ function createApplicationMenu(): void {
   Menu.setApplicationMenu(menu);
 }
 
+function setupAutoUpdates(): void {
+  if (!app.isPackaged || !autoUpdateEnabled) {
+    return;
+  }
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("error", (error) => {
+    console.error("Auto-update error:", error);
+  });
+
+  autoUpdater.on("update-downloaded", async () => {
+    const result = await dialog.showMessageBox(mainWindow ?? undefined, {
+      type: "info",
+      buttons: ["Restart now", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "Update ready",
+      message: "Kindred update downloaded",
+      detail: "Restart now to apply the update."
+    });
+
+    if (result.response === 0) {
+      autoUpdater.quitAndInstall();
+    }
+  });
+
+  void autoUpdater.checkForUpdatesAndNotify();
+}
+
 function showAboutDialog(): void {
   const appVersion = app.getVersion();
   dialog.showMessageBox(mainWindow ?? undefined, {
@@ -128,13 +173,32 @@ function showAboutDialog(): void {
 }
 
 function checkForUpdates(): void {
-  // Scaffold for electron-updater integration
-  // In production, this would check GitHub releases and download updates
-  dialog.showMessageBox(mainWindow ?? undefined, {
-    type: "info",
-    title: "Check for Updates",
-    message: "Kindred is up to date",
-    detail: "You're running the latest version. Updates will be checked automatically on launch."
+  if (!app.isPackaged) {
+    void dialog.showMessageBox(mainWindow ?? undefined, {
+      type: "info",
+      title: "Check for Updates",
+      message: "Updates are available in packaged builds only.",
+      detail: "Run a packaged Kindred build to check GitHub Releases."
+    });
+    return;
+  }
+
+  void autoUpdater.checkForUpdates().then((result) => {
+    if (!result?.updateInfo?.version) {
+      void dialog.showMessageBox(mainWindow ?? undefined, {
+        type: "info",
+        title: "Check for Updates",
+        message: "Kindred is up to date",
+        detail: "You're running the latest version."
+      });
+    }
+  }).catch((error) => {
+    void dialog.showMessageBox(mainWindow ?? undefined, {
+      type: "error",
+      title: "Update check failed",
+      message: "Kindred could not check for updates.",
+      detail: error instanceof Error ? error.message : "Unknown update error."
+    });
   });
 }
 
@@ -184,11 +248,23 @@ function registerIpcHandlers(): void {
         });
 
         return result.response === 0;
+      },
+      streamCallbacks: {
+        onStdout: (data: string) => {
+          mainWindow?.webContents.send("runtime:stdout", data);
+        },
+        onStderr: (data: string) => {
+          mainWindow?.webContents.send("runtime:stderr", data);
+        }
       }
     });
   });
 
   ipcMain.handle("runtime:stop", async () => stopExecution());
+
+  ipcMain.on("runtime:writeStdin", (_, data: string) => {
+    writeToRunningProcess(data);
+  });
 
   ipcMain.handle("runtime:status", async () => {
     const appRoot = app.getAppPath();
@@ -201,12 +277,33 @@ function registerIpcHandlers(): void {
       resourceRoot
     });
   });
+
+  ipcMain.on("window:minimize", () => {
+    mainWindow?.minimize();
+  });
+
+  ipcMain.on("window:maximize", () => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow?.maximize();
+    }
+  });
+
+  ipcMain.on("window:close", () => {
+    mainWindow?.close();
+  });
+
+  ipcMain.handle("window:isMaximized", () => {
+    return mainWindow?.isMaximized() ?? false;
+  });
 }
 
 app.whenReady().then(() => {
   registerIpcHandlers();
-  Menu.setApplicationMenu(null);
+  createApplicationMenu();
   mainWindow = createMainWindow();
+  setupAutoUpdates();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

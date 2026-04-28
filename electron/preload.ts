@@ -28,6 +28,35 @@ const api = {
     return () => {
       ipcRenderer.removeListener(channel, listener);
     };
+  },
+  windowMinimize: (): void => { ipcRenderer.send("window:minimize"); },
+  windowMaximize: (): void => { ipcRenderer.send("window:maximize"); },
+  windowClose: (): void => { ipcRenderer.send("window:close"); },
+  windowIsMaximized: (): Promise<boolean> => ipcRenderer.invoke("window:isMaximized"),
+  onMaximizeChange: (callback: (isMaximized: boolean) => void): (() => void) => {
+    const listener = (_event: unknown, isMaximized: boolean) => callback(isMaximized);
+    ipcRenderer.on("window:maximizeChanged", listener);
+    return () => {
+      ipcRenderer.removeListener("window:maximizeChanged", listener);
+    };
+  },
+  onFocusChange: (callback: (isFocused: boolean) => void): (() => void) => {
+    const listener = (_event: unknown, isFocused: boolean) => callback(isFocused);
+    ipcRenderer.on("window:focusChanged", listener);
+    return () => {
+      ipcRenderer.removeListener("window:focusChanged", listener);
+    };
+  },
+  writeStdin: (data: string): void => { ipcRenderer.send("runtime:writeStdin", data); },
+  onStdout: (callback: (data: string) => void): (() => void) => {
+    const listener = (_event: unknown, data: string) => callback(data);
+    ipcRenderer.on("runtime:stdout", listener);
+    return () => { ipcRenderer.removeListener("runtime:stdout", listener); };
+  },
+  onStderr: (callback: (data: string) => void): (() => void) => {
+    const listener = (_event: unknown, data: string) => callback(data);
+    ipcRenderer.on("runtime:stderr", listener);
+    return () => { ipcRenderer.removeListener("runtime:stderr", listener); };
   }
 };
 

@@ -63,8 +63,8 @@ export interface ResolveRuntimeOptions {
 
 const localCandidates: Record<RuntimeKey, RuntimeCommand[]> = {
   python: [
-    { command: "python", argsPrefix: [], label: "Local Python" },
-    { command: "py", argsPrefix: ["-3"], label: "Windows Python Launcher" }
+    { command: "py", argsPrefix: ["-3"], label: "Windows Python Launcher" },
+    { command: "python", argsPrefix: [], label: "Local Python" }
   ],
   node: [{ command: "node", argsPrefix: [], label: "Local Node.js" }],
   cCompiler: [

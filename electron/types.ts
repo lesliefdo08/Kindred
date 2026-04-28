@@ -45,6 +45,8 @@ export interface OpenFolderResult {
   entries: ExplorerNode[];
 }
 
+export type MenuAction = "open" | "save" | "run" | "openFolder" | "closeFolder";
+
 export interface RunCodeRequest {
   language: SupportedLanguage;
   code: string;

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { ConsoleTab, EditorDiagnostic, ErrorInsight, ExecutionLogEntry, ExecutionSummary } from "../types";
 
 interface ConsolePaneProps {
@@ -11,8 +11,8 @@ interface ConsolePaneProps {
   errorInsights: ErrorInsight[];
   summary: ExecutionSummary;
   isRunning: boolean;
-  stdin: string;
-  onStdinChange: (value: string) => void;
+  terminalLines: string[];
+  onTerminalInput: (line: string) => void;
   diagnostics: EditorDiagnostic[];
   onSelectDiagnostic: (line: number) => void;
   activeTab: ConsoleTab;
@@ -40,7 +40,7 @@ function humanizeLogStep(step: string): string {
   }
 }
 
-export default function ConsolePane({ output, error, command, durationMs, exitCode, logs, errorInsights, summary, isRunning, stdin, onStdinChange, diagnostics, onSelectDiagnostic, activeTab, onTabChange }: ConsolePaneProps) {
+export default function ConsolePane({ output, error, command, durationMs, exitCode, logs, errorInsights, summary, isRunning, terminalLines, onTerminalInput, diagnostics, onSelectDiagnostic, activeTab, onTabChange }: ConsolePaneProps) {
 
   const readableLogs = useMemo(() => {
     return logs.map((log) => `[${log.at}] ${humanizeLogStep(log.step)}: ${log.detail}`).join("\n");
@@ -52,7 +52,38 @@ export default function ConsolePane({ output, error, command, durationMs, exitCo
     : command
       ? `${summary.title} • ${summary.detail} • Exit code ${exitCode ?? (summary.tone === "success" ? "0" : "1")}`
       : "Idle";
-  const terminalPrompt = isRunning ? "Program running..." : "Terminal ready.";
+
+  const terminalStreamRef = useRef<HTMLPreElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-scroll terminal to bottom on new content
+  useEffect(() => {
+    if (terminalStreamRef.current) {
+      terminalStreamRef.current.scrollTop = terminalStreamRef.current.scrollHeight;
+    }
+  }, [terminalLines, output, error]);
+
+  // Focus input when switching to terminal tab while running
+  useEffect(() => {
+    if (activeTab === "terminal" && isRunning && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [activeTab, isRunning]);
+
+  const handleInputKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const value = (event.target as HTMLInputElement).value;
+      onTerminalInput(value);
+      (event.target as HTMLInputElement).value = "";
+    }
+  }, [onTerminalInput]);
+
+  const handleTerminalBodyClick = useCallback(() => {
+    if (isRunning && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isRunning]);
 
   return (
     <section className="console-pane" aria-label="Execution output" tabIndex={-1}>
@@ -117,24 +148,35 @@ export default function ConsolePane({ output, error, command, durationMs, exitCo
           </div>
         ) : null}
         {activeTab === "terminal" ? (
-          <div className="terminal-view">
-            <pre className="console-output">{output || ""}</pre>
-            {error ? <pre className="console-output console-error">{error}</pre> : null}
-            <div className="terminal-prompt">{terminalPrompt}</div>
-            <pre className="console-output console-log">{stdin ? `> ${stdin}` : "> "}</pre>
-            <label className="stdin-label" htmlFor="terminal-stdin-input">Program Input (stdin)</label>
-            <textarea
-              id="terminal-stdin-input"
-              className="stdin-input terminal-stdin"
-              value={stdin}
-              onChange={(event) => onStdinChange(event.target.value)}
-              placeholder={"Example:\n42\nhello world\n\nEach line is sent to your program input."}
-            />
+          <div className="terminal-view" onClick={handleTerminalBodyClick}>
+            {terminalLines.length > 0 ? (
+              <pre className="console-output terminal-stream" ref={terminalStreamRef}>
+                {terminalLines.map((line, i) => (
+                  <span key={i} className={line.startsWith("\x1b[stderr]") ? "terminal-stderr" : line.startsWith("> ") ? "terminal-stdin-echo" : ""}>{line.startsWith("\x1b[stderr]") ? line.slice(9) : line}{"\n"}</span>
+                ))}
+              </pre>
+            ) : (
+              <pre className="console-output terminal-idle" ref={terminalStreamRef}>Terminal ready.{"\n"}Run your program to see output here.</pre>
+            )}
+            {isRunning ? (
+              <div className="terminal-input-line">
+                <span className="terminal-input-prompt">{">"}</span>
+                <input
+                  ref={inputRef}
+                  type="text"
+                  className="terminal-inline-input"
+                  onKeyDown={handleInputKeyDown}
+                  placeholder="Type input and press Enter…"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+            ) : null}
           </div>
         ) : null}
         {activeTab === "logs" ? (
-          <details className="advanced-logs">
-            <summary>Advanced Logs</summary>
+          <details className="advanced-logs" open>
+            <summary>Execution Logs</summary>
             <pre className="console-output console-log">{readableLogs || "No logs yet"}</pre>
           </details>
         ) : null}

@@ -129,7 +129,7 @@ export interface WorkspaceDocument {
 
 export type ConsoleTab = "output" | "problems" | "terminal" | "logs";
 
-export type MenuAction = "open" | "save" | "run" | "openFolder";
+export type MenuAction = "open" | "save" | "run" | "openFolder" | "closeFolder";
 
 export interface KindredApi {
   openFile: () => Promise<OpenFileResult | null>;
@@ -141,4 +141,13 @@ export interface KindredApi {
   stopRun: () => Promise<{ stopped: boolean }>;
   checkRuntimeStatus: () => Promise<RuntimeStatusResult>;
   onMenuAction: (action: MenuAction, callback: () => void) => () => void;
+  windowMinimize: () => void;
+  windowMaximize: () => void;
+  windowClose: () => void;
+  windowIsMaximized: () => Promise<boolean>;
+  onMaximizeChange: (callback: (isMaximized: boolean) => void) => () => void;
+  onFocusChange: (callback: (isFocused: boolean) => void) => () => void;
+  writeStdin: (data: string) => void;
+  onStdout: (callback: (data: string) => void) => () => void;
+  onStderr: (callback: (data: string) => void) => () => void;
 }

@@ -20,15 +20,6 @@ import {
 
 const detectionConfidenceThreshold = 0.62;
 
-const starterTemplates: Record<SupportedLanguage, string> = {
-  python: "print(\"Hello, world!\")\n",
-  c: "#include <stdio.h>\n\nint main(void) {\n    printf(\"Hello, world!\\n\");\n    return 0;\n}\n",
-  cpp: "#include <iostream>\n\nint main() {\n    std::cout << \"Hello, world!\\n\";\n    return 0;\n}\n",
-  javascript: "console.log(\"Hello, world!\");\n",
-  java: "public class Main {\n    public static void main(String[] args) {\n        System.out.println(\"Hello, world!\");\n    }\n}\n",
-  plaintext: ""
-};
-
 const extensionByLanguage: Record<SupportedLanguage, string> = {
   python: "py",
   c: "c",
@@ -235,6 +226,7 @@ export default function App() {
   const editorColumnRef = useRef<HTMLElement | null>(null);
   const isDraggingConsoleRef = useRef(false);
   const isDraggingExplorerRef = useRef(false);
+  const editorFontSizeRef = useRef<number>(14);
 
   const [documents, setDocuments] = useState<WorkspaceDocument[]>([
     createDocument({
@@ -263,12 +255,12 @@ export default function App() {
   const [logs, setLogs] = useState<ExecutionLogEntry[]>([]);
   const [errorInsights, setErrorInsights] = useState<ErrorInsight[]>([]);
   const [appError, setAppError] = useState("");
-  const [stdin, setStdin] = useState("");
-  const [consoleTab, setConsoleTab] = useState<ConsoleTab>("output");
+  const [terminalLines, setTerminalLines] = useState<string[]>([]);
+  const [consoleTab, setConsoleTab] = useState<ConsoleTab>("terminal");
   const [editorFontSize, setEditorFontSize] = useState<number>(14);
   const [consoleHeight, setConsoleHeight] = useState<number>(() => {
     const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 900;
-    return Math.max(180, Math.round(viewportHeight * 0.25));
+    return Math.max(260, Math.round(viewportHeight * 0.38));
   });
   const [isResizingConsole, setIsResizingConsole] = useState(false);
 
@@ -276,9 +268,14 @@ export default function App() {
   const [workspaceTree, setWorkspaceTree] = useState<ExplorerNode[]>([]);
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [explorerVisible, setExplorerVisible] = useState(false);
+  const [showLanguageOverride, setShowLanguageOverride] = useState(false);
   const [explorerWidth, setExplorerWidth] = useState(260);
   const [isResizingExplorer, setIsResizingExplorer] = useState(false);
   const [focusLine, setFocusLine] = useState<number | null>(null);
+
+  useEffect(() => {
+    editorFontSizeRef.current = editorFontSize;
+  }, [editorFontSize]);
 
   const activeDocument = useMemo(() => documents.find((document) => document.id === activeDocumentId) ?? documents[0], [documents, activeDocumentId]);
   const activeDetection = activeDocument?.detection ?? null;
@@ -288,8 +285,21 @@ export default function App() {
   );
   const canRun = useMemo(() => activeDocument?.content.trim().length > 0 && effectiveLanguage !== "plaintext", [activeDocument, effectiveLanguage]);
   const hasWorkspace = workspaceRootName !== null;
-  const showExplorerPanel = hasWorkspace && explorerVisible;
+  const showExplorerPanel = explorerVisible;
   const editorColumnStyle = useMemo(() => ({ "--console-height": `${consoleHeight}px` } as CSSProperties), [consoleHeight]);
+
+  const looksLikeInputPrompt = useCallback((chunk: string): boolean => {
+    const trimmed = chunk.trimEnd();
+    if (!trimmed) {
+      return false;
+    }
+
+    if (/[:?]$/.test(trimmed) && !/\n/.test(chunk)) {
+      return true;
+    }
+
+    return /(?:enter|input|value|expression|prompt|stdin)\s*[:?]?\s*$/i.test(trimmed);
+  }, []);
 
   const autoDetectedLabel = useMemo(() => {
     if (!activeDocument || activeDocument.executionMode !== "auto") {
@@ -302,9 +312,6 @@ export default function App() {
 
     return `Language: ${languageLabel(activeDetection.language)} (auto-detected)`;
   }, [activeDocument, activeDetection]);
-
-  const isStarterVisible = Boolean(activeDocument && !activeDocument.filePath && !activeDocument.content.trim());
-  const activeLanguageForTemplate = activeDocument ? inferDocumentLanguage(activeDocument.detection, activeDocument.executionMode) : "python";
 
   const setActiveDocumentFromFile = useCallback(async (fileResult: OpenFileResult) => {
     const existing = documents.find((document) => document.filePath && fileResult.filePath && document.filePath.toLowerCase() === fileResult.filePath.toLowerCase());
@@ -403,6 +410,14 @@ export default function App() {
     }
   }, [api]);
 
+  const handleCloseFolder = useCallback((): void => {
+    setWorkspaceRootName(null);
+    setWorkspaceTree([]);
+    setCollapsedFolders({});
+    setExplorerVisible(true);
+    setAppError("");
+  }, []);
+
   const handleSave = useCallback(async (): Promise<void> => {
     try {
       const current = activeDocument;
@@ -493,7 +508,8 @@ export default function App() {
     setErrorInsights([]);
     setDurationMs(0);
     setExitCode(null);
-    setConsoleTab("output");
+    setTerminalLines([]);
+    setConsoleTab("terminal");
     setExecutionSummary({ title: "Running", detail: "Executing with current language mode.", tone: "info" });
 
     try {
@@ -501,7 +517,7 @@ export default function App() {
         language: effectiveLanguage,
         code: activeDocument.content,
         filePath: activeDocument.filePath,
-        stdin,
+        stdin: "",
         executionMode: activeDocument.executionMode,
         detectionConfidence: activeDetection?.confidence ?? 0,
         detectedLanguage: activeDetection?.language ?? effectiveLanguage,
@@ -531,7 +547,43 @@ export default function App() {
     } finally {
       setIsRunning(false);
     }
-  }, [api, activeDocument, activeDocumentId, activeDetection, canRun, effectiveLanguage, stdin]);
+  }, [api, activeDocument, activeDocumentId, activeDetection, canRun, effectiveLanguage]);
+
+  // Streaming stdout/stderr listeners
+  useEffect(() => {
+    const unsubStdout = api.onStdout((data) => {
+      if (isRunning && looksLikeInputPrompt(data)) {
+        setConsoleTab("terminal");
+      }
+
+      setTerminalLines((prev) => {
+        const lines = data.split(/\r?\n/);
+        const updated = [...prev];
+        for (let i = 0; i < lines.length; i++) {
+          if (i === 0 && updated.length > 0 && !updated[updated.length - 1].endsWith("\n")) {
+            updated[updated.length - 1] += lines[i];
+          } else if (lines[i] || i < lines.length - 1) {
+            updated.push(lines[i]);
+          }
+        }
+        return updated;
+      });
+    });
+    const unsubStderr = api.onStderr((data) => {
+      if (isRunning && looksLikeInputPrompt(data)) {
+        setConsoleTab("terminal");
+      }
+
+      setTerminalLines((prev) => [...prev, `\x1b[stderr]${data.trimEnd()}`]);
+    });
+    return () => { unsubStdout(); unsubStderr(); };
+  }, [api, isRunning, looksLikeInputPrompt]);
+
+  const handleTerminalInput = useCallback((line: string) => {
+    setTerminalLines((prev) => [...prev, `> ${line}`]);
+    api.writeStdin(line + "\n");
+    setConsoleTab("terminal");
+  }, [api]);
 
   const handleDocumentChange = useCallback((content: string) => {
     updateActiveDocument((current) => ({ ...current, content, dirty: true }));
@@ -541,15 +593,18 @@ export default function App() {
     updateActiveDocument((current) => ({ ...current, executionMode: mode }));
   }, [updateActiveDocument]);
 
-  const loadStarterTemplate = useCallback((language: SupportedLanguage) => {
-    updateActiveDocument((current) => ({
-      ...current,
-      content: starterTemplates[language],
-      executionMode: language === "plaintext" ? "auto" : language,
-      dirty: true
-    }));
-    setConsoleTab("output");
-  }, [updateActiveDocument]);
+  const clampEditorFontSize = useCallback((nextSize: number) => {
+    const clamped = Math.max(12, Math.min(22, nextSize));
+    setEditorFontSize(clamped);
+  }, []);
+
+  const zoomEditor = useCallback((delta: number) => {
+    clampEditorFontSize(editorFontSizeRef.current + delta);
+  }, [clampEditorFontSize]);
+
+  const resetEditorZoom = useCallback(() => {
+    clampEditorFontSize(14);
+  }, [clampEditorFontSize]);
 
   const openFromExplorer = useCallback(async (filePath: string) => {
     try {
@@ -578,6 +633,15 @@ export default function App() {
       } else if (ctrlKey && key === "s") {
         event.preventDefault();
         void handleSave();
+      } else if (ctrlKey && (key === "=" || key === "+")) {
+        event.preventDefault();
+        zoomEditor(1);
+      } else if (ctrlKey && key === "-") {
+        event.preventDefault();
+        zoomEditor(-1);
+      } else if (ctrlKey && key === "0") {
+        event.preventDefault();
+        resetEditorZoom();
       } else if ((ctrlKey && key === "r") || event.key === "F5") {
         event.preventDefault();
         if (!isRunning && canRun) {
@@ -590,9 +654,7 @@ export default function App() {
         }
       } else if (ctrlKey && key === "b") {
         event.preventDefault();
-        if (hasWorkspace) {
-          setExplorerVisible((current) => !current);
-        }
+        setExplorerVisible((current) => !current);
       } else if (ctrlKey && event.key === "`") {
         event.preventDefault();
         setConsoleTab((current) => (current === "terminal" ? "output" : "terminal"));
@@ -600,14 +662,32 @@ export default function App() {
     }
 
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [canRun, handleOpen, handleOpenFolder, handleRun, handleSave, hasWorkspace, isRunning]);
+    function handleWheel(event: WheelEvent): void {
+      if (!event.ctrlKey) {
+        return;
+      }
+
+      event.preventDefault();
+      if (event.deltaY < 0) {
+        zoomEditor(1);
+      } else if (event.deltaY > 0) {
+        zoomEditor(-1);
+      }
+    }
+
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("wheel", handleWheel);
+    };
+  }, [canRun, handleOpen, handleOpenFolder, handleRun, handleSave, hasWorkspace, isRunning, resetEditorZoom, zoomEditor]);
 
   useEffect(() => {
     const unsubscribers: Array<() => void> = [];
     try {
       unsubscribers.push(api.onMenuAction("open", () => { void handleOpen(); }));
       unsubscribers.push(api.onMenuAction("openFolder", () => { void handleOpenFolder(); }));
+      unsubscribers.push(api.onMenuAction("closeFolder", () => { handleCloseFolder(); }));
       unsubscribers.push(api.onMenuAction("save", () => { void handleSave(); }));
       unsubscribers.push(api.onMenuAction("run", () => { void handleRun(); }));
     } catch {
@@ -617,7 +697,7 @@ export default function App() {
     return () => {
       unsubscribers.forEach((unsubscribe) => unsubscribe());
     };
-  }, [api, handleOpen, handleOpenFolder, handleRun, handleSave]);
+  }, [api, handleCloseFolder, handleOpen, handleOpenFolder, handleRun, handleSave]);
 
   useEffect(() => {
     if (!activeDocument) {
@@ -815,21 +895,60 @@ export default function App() {
     setIsResizingExplorer(true);
   }
 
+  const statusLanguageText = useMemo(() => {
+    if (!activeDocument || activeDocument.executionMode !== "auto") {
+      return languageLabel(effectiveLanguage);
+    }
+    if (!activeDetection || activeDetection.isAmbiguous || activeDetection.confidence < detectionConfidenceThreshold) {
+      return "Plaintext";
+    }
+    return `${languageLabel(activeDetection.language)}`;
+  }, [activeDocument, activeDetection, effectiveLanguage]);
+
   return (
     <main className="app-shell">
       <Toolbar
-        fileName={activeDocument?.fileName ?? "untitled.py"}
-        executionMode={activeDocument?.executionMode ?? "auto"}
-        detectedLanguage={effectiveLanguage}
-        autoDetectedLabel={autoDetectedLabel}
         isRunning={isRunning}
-        fontSize={editorFontSize}
-        onFontSizeChange={setEditorFontSize}
+        canRun={canRun}
         onSave={handleSave}
         onRun={handleRun}
         onStop={handleStop}
-        onExecutionModeChange={handleExecutionModeChange}
-      />
+      >
+        <div className="document-tabs" role="tablist" aria-label="Open files">
+          {documents.map((document) => (
+            <div
+              key={document.id}
+              className={`document-tab ${document.id === activeDocumentId ? "active" : ""}`}
+              role="tab"
+              aria-selected={document.id === activeDocumentId}
+              tabIndex={0}
+              onClick={() => switchDocument(document.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  switchDocument(document.id);
+                }
+              }}
+              title={document.filePath ?? "Unsaved document"}
+            >
+              <span className="document-tab-title">{document.fileName}</span>
+              {document.dirty ? <span className="document-dirty">●</span> : null}
+              <button
+                type="button"
+                className="document-close"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  closeDocument(document.id);
+                }}
+                aria-label={`Close ${document.fileName}`}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          <button type="button" className="document-new" onClick={createNewDocument} title="New file">+</button>
+        </div>
+      </Toolbar>
 
       {appError ? (
         <div className="app-banner" role="status" aria-live="polite">
@@ -838,69 +957,50 @@ export default function App() {
       ) : null}
 
       <section className="workspace-shell" ref={workspaceShellRef}>
+        {/* Activity bar */}
+        <nav className="activity-bar" aria-label="Activity bar">
+          <button
+            type="button"
+            className={`activity-btn ${showExplorerPanel ? "active" : ""}`}
+            onClick={() => setExplorerVisible((v) => !v)}
+            title="Explorer (Ctrl+B)"
+            aria-label="Toggle file explorer"
+          >
+            ☰
+          </button>
+        </nav>
+
+        {/* Explorer sidebar */}
         {showExplorerPanel ? (
           <>
             <aside className="explorer-panel" style={{ width: explorerWidth }}>
               <div className="explorer-header">
-                <span>{workspaceRootName}</span>
-                <button type="button" className="btn ghost" onClick={() => setExplorerVisible(false)}>Hide</button>
+                <span>{hasWorkspace ? workspaceRootName : "Explorer"}</span>
+                <div className="explorer-header-actions">
+                  <button type="button" className="explorer-action-btn" onClick={handleOpen} title="Open File (Ctrl+Shift+O)">+</button>
+                  <button type="button" className="explorer-action-btn" onClick={handleOpenFolder} title="Open Folder (Ctrl+O)">⊞</button>
+                  {hasWorkspace ? <button type="button" className="explorer-action-btn" onClick={handleCloseFolder} title="Close Folder">×</button> : null}
+                </div>
               </div>
               <div className="explorer-body">
-                {workspaceTree.length > 0 ? renderExplorerNodes(workspaceTree) : <p className="explorer-empty">Folder is empty.</p>}
+                {hasWorkspace && workspaceTree.length > 0 ? (
+                  renderExplorerNodes(workspaceTree)
+                ) : hasWorkspace ? (
+                  <p className="explorer-empty">Folder is empty.</p>
+                ) : (
+                  <button type="button" className="explorer-open-btn" onClick={handleOpenFolder}>
+                    Open Folder
+                  </button>
+                )}
               </div>
             </aside>
             <div className="explorer-splitter" onMouseDown={beginExplorerResize} role="separator" aria-label="Resize explorer" aria-orientation="vertical" />
           </>
         ) : null}
 
+        {/* Editor area */}
         <section className="editor-column" ref={editorColumnRef} style={editorColumnStyle}>
-          <div className="document-tabs" role="tablist" aria-label="Open files">
-            {documents.map((document) => (
-              <div
-                key={document.id}
-                className={`document-tab ${document.id === activeDocumentId ? "active" : ""}`}
-                role="tab"
-                aria-selected={document.id === activeDocumentId}
-                tabIndex={0}
-                onClick={() => switchDocument(document.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    switchDocument(document.id);
-                  }
-                }}
-                title={document.filePath ?? "Unsaved document"}
-              >
-                <span className="document-tab-title">{document.fileName}</span>
-                {document.dirty ? <span className="document-dirty">●</span> : null}
-                <button
-                  type="button"
-                  className="document-close"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    closeDocument(document.id);
-                  }}
-                  aria-label={`Close ${document.fileName}`}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            <button type="button" className="document-new" onClick={createNewDocument} title="New file">+</button>
-          </div>
-
           <div className="editor-stage">
-            {isStarterVisible ? (
-              <div className="editor-empty-state">
-                <p className="editor-empty-title">Choose a language or start typing.</p>
-                <p className="editor-empty-copy">You can drop in a file, switch the mode, or load a starter template.</p>
-                <div className="editor-empty-actions">
-                  <button type="button" className="btn" onClick={() => loadStarterTemplate("python")}>Python Hello World</button>
-                  <button type="button" className="btn" onClick={() => loadStarterTemplate("c")}>C Hello World</button>
-                  <button type="button" className="btn" onClick={() => loadStarterTemplate("java")}>Java Main</button>
-                </div>
-              </div>
-            ) : null}
             {activeDocument ? (
               <EditorPane
                 value={activeDocument.content}
@@ -910,7 +1010,6 @@ export default function App() {
                 focusLine={focusLine}
                 onFocusLineHandled={() => setFocusLine(null)}
                 fontSize={editorFontSize}
-                placeholder={"// Start typing your code here..."}
               />
             ) : null}
           </div>
@@ -927,8 +1026,8 @@ export default function App() {
             errorInsights={errorInsights}
             summary={executionSummary}
             isRunning={isRunning}
-            stdin={stdin}
-            onStdinChange={setStdin}
+            terminalLines={terminalLines}
+            onTerminalInput={handleTerminalInput}
             diagnostics={activeDocument?.diagnostics ?? []}
             onSelectDiagnostic={(line) => setFocusLine(line)}
             activeTab={consoleTab}
@@ -936,6 +1035,40 @@ export default function App() {
           />
         </section>
       </section>
+
+      <footer className="status-bar" aria-label="Status bar">
+        <div className="status-left">
+          <button
+            type="button"
+            className="status-language-btn"
+            onClick={() => setShowLanguageOverride((v) => !v)}
+            title="Click to change language mode"
+          >
+            {statusLanguageText}{activeDocument?.executionMode === "auto" ? " (auto)" : ""}
+          </button>
+          {showLanguageOverride ? (
+            <select
+              className="status-override-select"
+              value={activeDocument?.executionMode ?? "auto"}
+              onChange={(event) => {
+                handleExecutionModeChange(event.target.value as "auto" | SupportedLanguage);
+                setShowLanguageOverride(false);
+              }}
+              aria-label="Language override"
+            >
+              <option value="auto">Auto</option>
+              <option value="python">Python</option>
+              <option value="c">C</option>
+              <option value="cpp">C++</option>
+              <option value="javascript">JavaScript</option>
+              <option value="java">Java</option>
+            </select>
+          ) : null}
+        </div>
+        <div className="status-right">
+          <span className="status-item">{isRunning ? "Running" : "Ready"}</span>
+        </div>
+      </footer>
     </main>
   );
 }

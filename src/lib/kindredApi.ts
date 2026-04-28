@@ -31,7 +31,20 @@ const fallbackApi: KindredApi = {
   },
   onMenuAction: (_action: MenuAction, _callback: () => void): (() => void) => {
     throw unavailableError("listen to menu actions");
-  }
+  },
+  windowMinimize: (): void => {},
+  windowMaximize: (): void => {},
+  windowClose: (): void => {},
+  windowIsMaximized: async (): Promise<boolean> => false,
+  onMaximizeChange: (_callback: (isMaximized: boolean) => void): (() => void) => {
+    return () => {};
+  },
+  onFocusChange: (_callback: (isFocused: boolean) => void): (() => void) => {
+    return () => {};
+  },
+  writeStdin: (_data: string): void => {},
+  onStdout: (_callback: (data: string) => void): (() => void) => { return () => {}; },
+  onStderr: (_callback: (data: string) => void): (() => void) => { return () => {}; }
 };
 
 export function getKindredApi(): KindredApi {

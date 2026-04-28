@@ -15,7 +15,7 @@
     "verify:intelligence": "tsx tests/intelligence-harness.ts",
     "dist:win": "npm run build && electron-builder --win nsis --publish never",
     "dist:win:portable": "npm run build && electron-builder --win portable --publish never",
-    "postinstall": "node scripts/bootstrap-tcc.js && node scripts/bootstrap-mingw.js"
+    "postinstall": "node scripts/bootstrap-tcc.js && node scripts/bootstrap-mingw.js && node scripts/patch-electron-builder-nsis.js"
   },
   "keywords": [
     "electron",
@@ -25,8 +25,13 @@
   ],
   "author": "",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lesliefdo08/Kindred.git"
+  },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "electron-updater": "^6.8.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -40,6 +45,7 @@
     "electron": "^31.7.7",
     "electron-builder": "^24.13.3",
     "esbuild": "^0.25.4",
+    "rcedit": "^5.0.2",
     "tsx": "^4.19.2",
     "typescript": "^5.8.3",
     "vite": "^4.5.5",
@@ -58,25 +64,37 @@
       "dist/**",
       "dist-electron/**",
       "resources/**",
-      "build/icons/**",
       "kindredlogo.png",
-      "kindred_logo.ico",
       "kindred_logo_name.png",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "kindred_logo.ico",
+        "to": "kindred_logo.ico"
+      }
+    ],
     "win": {
-      "icon": "build/icons/kindred.ico",
+      "icon": "kindred_logo.ico",
       "signAndEditExecutable": false,
       "target": [
         "nsis"
       ]
     },
+    "afterPack": "./scripts/apply-windows-icon.js",
     "nsis": {
-      "installerIcon": "build/icons/kindred.ico",
-      "uninstallerIcon": "build/icons/kindred.ico",
-      "installerHeaderIcon": "build/icons/kindred.ico",
+      "installerIcon": "kindred_logo.ico",
+      "uninstallerIcon": "kindred_logo.ico",
+      "installerHeaderIcon": "kindred_logo.ico",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "lesliefdo08",
+        "repo": "Kindred"
+      }
+    ]
   }
 }
