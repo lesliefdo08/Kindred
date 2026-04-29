@@ -1,0 +1,38 @@
+{
+  "appId": "com.kindred.ide",
+  "productName": "Kindred",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**",
+    "dist-electron/**",
+    "resources/**",
+    "kindredlogo.png",
+    "kindred_logo_name.png",
+    "package.json",
+    "!resources/runtimes/**",
+    "!resources/elevate.exe",
+    "!managed-runtimes/**"
+  ],
+  "extraResources": [
+    {
+      "from": "kindred_logo.ico",
+      "to": "kindred_logo.ico"
+    }
+  ],
+  "win": {
+    "icon": "kindred_logo.ico",
+    "signAndEditExecutable": false,
+    "target": [
+      "portable"
+    ]
+  },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "lesliefdo08",
+      "repo": "Kindred"
+    }
+  ]
+}

@@ -15,8 +15,8 @@
     "verify:intelligence": "tsx tests/intelligence-harness.ts",
     "dist:win": "npm run build && electron-builder --win nsis --publish never",
     "dist:win:portable": "npm run build && electron-builder --win portable --publish never",
-    "postinstall": "node scripts/bootstrap-tcc.js && node scripts/bootstrap-mingw.js && node scripts/patch-electron-builder-nsis.js"
-  },
+    "dist:win:portable-minimal": "npm run build && cross-env PORTABLE_MINIMAL=1 electron-builder --win portable --config .electron-builder.portable.json --publish never",
+    "bootstrap": "node scripts/bootstrap-tcc.js && node scripts/bootstrap-mingw.js"  },
   "keywords": [
     "electron",
     "react",
@@ -87,7 +87,10 @@
       "uninstallerIcon": "kindred_logo.ico",
       "installerHeaderIcon": "kindred_logo.ico",
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "packElevateHelper": false
     },
     "publish": [
       {
