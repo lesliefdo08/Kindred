@@ -35,7 +35,7 @@ function createMainWindow(): BrowserWindow {
     backgroundColor: "#0b0f16",
     icon,
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: path.join(app.getAppPath(), "dist-electron", "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false
@@ -49,7 +49,10 @@ function createMainWindow(): BrowserWindow {
   if (devServerUrl) {
     void window.loadURL(devServerUrl);
   } else {
-    void window.loadFile(path.join(__dirname, "../dist/index.html"));
+    // Use proper file:// URL for Windows paths (three slashes for local paths)
+    const indexPath = path.join(app.getAppPath(), "dist", "index.html");
+    const fileUrl = `file:///${indexPath.replace(/\\/g, "/")}`;
+    void window.loadURL(fileUrl);
   }
 
   window.once("ready-to-show", () => {
